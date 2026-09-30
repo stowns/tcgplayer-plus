@@ -1,0 +1,13 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+:root { color-scheme: light dark; }
+body {
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0; padding: 14px; width: 320px;
+}
+h1 { font-size: 15px; margin: 0 0 4px; }
+.intro { color: #64748b; margin: 0 0 12px; }
+.actions { display: flex; gap: 8px; margin-top: 10px; }
+button { cursor: pointer; padding: 5px 12px; }
+button.secondary { background: transparent; }
+#status { color: #16a34a; margin: 10px 0 0; min-height: 1.2em; }
+.hint { color: #64748b; font-size: 12px; margin: 0; }

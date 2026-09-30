@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TCGPlayer+</title>
+  <link rel="stylesheet" href="home.css">
+  <link rel="stylesheet" href="lists.css">
+  <link rel="stylesheet" href="orders.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>TCGPlayer+</h1>
+    <div class="tabs" role="tablist" aria-label="TCGPlayer+ views">
+      <button type="button" class="tab" role="tab" id="tab-lists" data-view="lists" aria-controls="view">Saved Lists</button>
+      <button type="button" class="tab" role="tab" id="tab-orders" data-view="orders" aria-controls="view">Order History</button>
+    </div>
+  </header>
+  <main id="view" role="tabpanel"></main>
+  <script src="home.js"></script>
+</body>
+</html>

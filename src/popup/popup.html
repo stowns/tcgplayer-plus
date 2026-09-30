@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TCGPlayer+</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>TCGPlayer+</h1>
+  <p class="intro">
+    Saved Lists with price trends, and your order history with what each card
+    would cost today.
+  </p>
+
+  <p class="hint" id="listsSummary">No lists yet.</p>
+  <div class="actions">
+    <button type="button" id="openDashboard">Dashboard</button>
+  </div>
+
+  <div class="actions">
+    <button type="button" id="clearCache" class="secondary">Clear price cache</button>
+  </div>
+  <p id="status" role="status"></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

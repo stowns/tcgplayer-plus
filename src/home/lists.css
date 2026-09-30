@@ -1,0 +1,46 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The Saved Lists view. Page-wide styles live in home.css. */
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-top: 18px; padding: 16px 18px; }
+.list__header { align-items: baseline; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 12px; padding-bottom: 10px; }
+.list__name { font-size: 17px; margin: 0; }
+.list__count { color: var(--ink-soft); font-size: 13px; }
+.list__actions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.list__sort { align-items: center; display: inline-flex; gap: 6px; }
+.list__sort-select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 13px; padding: 2px 6px; }
+.list__actions button, .item__remove { font-size: 13px; padding: 3px 10px; }
+.list__empty { color: var(--ink-soft); margin: 14px 0 0; }
+
+.item-list { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 8px 0 0; padding: 0; }
+.item { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 14px; padding: 12px 0; }
+.item:last-child { border-bottom: 0; }
+.item__image { border-radius: 4px; flex: none; height: 74px; object-fit: contain; width: 54px; }
+.item__body { flex: 1; min-width: 0; }
+.item__name { color: var(--ink); display: inline-block; font-weight: 600; text-decoration: none; }
+.item__name:hover { text-decoration: underline; }
+.item__subtitle, .item__price, .item__saved { color: var(--ink-soft); font-size: 13px; margin: 2px 0 0; }
+.item__price { font-variant-numeric: tabular-nums; }
+.item__remove { flex: none; }
+.empty { border: 1px dashed var(--line); border-radius: 10px; color: var(--ink-soft); margin-top: 24px; padding: 30px; text-align: center; }
+
+/* ---- price trend ---------------------------------------------------------- */
+
+.item__trend { flex: none; text-align: right; width: 124px; }
+.trend { color: var(--ink-soft); display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.trend__summary { font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.trend__label { font-size: 11px; }
+.trend__note { color: var(--ink); font-size: 11px; font-style: italic; max-width: 124px; text-align: right; }
+.trend__stat { color: var(--ink-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+.trend .sparkline { display: block; margin-top: 4px; }
+.trend--loading .trend__summary { font-weight: 400; }
+.trend--unknown .trend__summary { font-size: 12px; font-weight: 400; white-space: normal; }
+
+/* Rising is green, falling is red, as on the order pages. The sparkline follows the colour. */
+.trend--up { color: var(--gain); }
+.trend--down { color: var(--loss); }
+
+@media (max-width: 640px) {
+  .item { flex-wrap: wrap; }
+  .item__trend { order: 3; text-align: left; width: 100%; }
+  .trend { align-items: flex-start; }
+  .trend__note { text-align: left; }
+}

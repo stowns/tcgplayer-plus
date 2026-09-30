@@ -1,0 +1,186 @@
+/*
+ * TCGPlayer+ — the Order History view.
+ * Shows the purchases kept in the local archive, refreshes them from TCGplayer
+ * on request, and fills in what each item would cost today.
+ * Copyright (C) 2026  Simon Townsend
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+import {
+  loadArchive, ordersInRange, rangeChoices, ALL_SAVED, ORDERS_KEY,
+} from '../../lib/ordersArchive.js';
+import {
+  renderOrders, renderNotice, updateResult, itemKeyOf, describeSync, describeAge,
+} from '../../lib/ordersView.js';
+
+const api = globalThis.browser || globalThis.chrome;
+const storage = api.storage.local;
+
+const RANGE_KEY = 'ptcg.ordersRange';
+const DEFAULT_RANGE = 'Last 30 Days';
+/** Opening the tab re-reads TCGplayer only if the last read is older than this. */
+const STALE_MS = 10 * 60 * 1000;
+
+const remembered = () => { try { return localStorage.getItem(RANGE_KEY) || ''; } catch { return ''; } };
+const remember = (range) => { try { localStorage.setItem(RANGE_KEY, range); } catch { /* not worth failing over */ } };
+
+function make(tag, props = {}, text) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+/** @returns {() => void} unmount */
+export function mount(root) {
+  const choices = rangeChoices(new Date().getFullYear());
+  let range = choices.includes(remembered()) ? remembered() : DEFAULT_RANGE;
+
+  const header = make('div', { className: 'page-header' });
+  const intro = make('div');
+  intro.append(
+    make('h2', {}, 'Order History'),
+    make('p', { className: 'intro' }, 'Your TCGplayer purchases, kept in this browser so they stay here after TCGplayer stops listing them, '
+      + 'with what each would cost today.'),
+  );
+  header.append(intro);
+
+  const bar = make('div', { className: 'orders-bar' });
+  const rangeLabel = make('label', { className: 'orders-bar__range' });
+  const select = make('select', { id: 'ordersRange' });
+  for (const choice of choices) select.append(make('option', { value: choice, selected: choice === range }, choice));
+  select.title = 'Choosing a range also changes the range shown on TCGplayer’s own Order History page, '
+    + 'as its own dropdown does. "All saved" shows everything kept here and reads nothing.';
+  rangeLabel.append(make('span', {}, 'Orders placed in '), select);
+  const refresh = make('button', { type: 'button', className: 'secondary' }, 'Refresh from TCGplayer');
+  const age = make('span', { className: 'orders-bar__age' });
+  bar.append(rangeLabel, refresh, age);
+
+  const status = make('p', { role: 'status', className: 'orders-status' });
+  const container = make('div', { className: 'orders' });
+  const footer = make('p', { className: 'orders-footer' });
+  const clear = make('button', { type: 'button', className: 'secondary' }, 'Clear saved orders');
+  footer.append(clear);
+  root.append(header, bar, status, container, footer);
+
+  let mounted = true;
+  let syncing = false;
+  let syncOutcome = null;
+  let freshPrices = false;
+  let shown = [];
+  const results = {};
+  const requested = new Set();
+
+  function say(message, isError = false) {
+    status.textContent = message;
+    status.setAttribute('data-error', isError ? '1' : '0');
+  }
+
+  // ---- today's prices --------------------------------------------------------------
+  // Fetched for every item shown, newest order first, so the total above the list
+  // fills in without scrolling. The background paces them and caches each for 10 minutes; Refresh goes past the cache.
+
+  async function requestPrice(item, fresh = false) {
+    const key = itemKeyOf(item);
+    if (!item.productId || !Number.isFinite(item.paid) || requested.has(key)) return;
+    requested.add(key);
+    let result;
+    try {
+      result = await api.runtime.sendMessage({ type: 'listing-price', item: { productId: item.productId, condition: item.condition, fresh } });
+    } catch {
+      result = null;
+    }
+    results[key] = result && result.status ? result : { status: 'unavailable' };
+    if (mounted) updateResult(document, container, shown, key, results);
+  }
+
+  // ---- drawing ------------------------------------------------------------------
+
+  async function draw() {
+    const archive = await loadArchive(storage);
+    if (!mounted) return;
+    const today = new Date().toISOString().slice(0, 10);
+    shown = ordersInRange(archive, range, today);
+
+    if (!shown.length) {
+      container.replaceChildren(renderNotice(document,
+        syncOutcome && syncOutcome.status === 'signed-out' ? 'signed-out'
+          : Object.keys(archive.orders).length ? 'empty-range' : 'empty', { range }));
+    } else {
+      renderOrders(document, container, shown, results);
+      for (const order of shown) order.items.forEach((item) => requestPrice(item, freshPrices));
+    }
+    age.textContent = range === ALL_SAVED
+      ? `${Object.keys(archive.orders).length} saved`
+      : describeAge(archive.syncedAt[range]);
+    refresh.disabled = syncing || range === ALL_SAVED;
+    select.disabled = syncing;
+    return archive;
+  }
+
+  // ---- reading TCGplayer --------------------------------------------------------
+
+  async function sync() {
+    if (syncing || range === ALL_SAVED) return;
+    syncing = true;
+    refresh.disabled = true;
+    select.disabled = true;
+    say('Reading your orders from TCGplayer…');
+    let result;
+    try {
+      result = await api.runtime.sendMessage({ type: 'sync-orders', range });
+    } catch (err) {
+      result = { status: 'error', error: err && err.message ? err.message : String(err), count: 0 };
+    }
+    syncing = false;
+    if (!mounted) return;
+    syncOutcome = result;
+    const { text, isError } = describeSync(result, { range });
+    say(text, isError);
+    await draw();
+  }
+
+  select.addEventListener('change', async () => {
+    range = select.value;
+    remember(range);
+    syncOutcome = null;
+    say('');
+    const archive = await draw();
+    if (range !== ALL_SAVED && archive) sync();
+  });
+
+  // Refresh means "make it current": orders from TCGplayer, and today's prices past the cache.
+  refresh.addEventListener('click', async () => {
+    requested.clear();
+    for (const key of Object.keys(results)) delete results[key];
+    freshPrices = true;
+    await sync();
+    freshPrices = false;
+  });
+
+  clear.addEventListener('click', async () => {
+    const count = shown.length;
+    if (!window.confirm('Remove every order saved in this browser? '
+      + 'They can be read again from TCGplayer, but only while it still lists them.')) return;
+    await storage.remove(ORDERS_KEY);
+    say(count ? 'Cleared the saved orders.' : '');
+    await draw();
+  });
+
+  // Orders saved by visiting TCGplayer's own page appear here without a refresh.
+  const onChanged = (changes, area) => {
+    if (area === 'local' && changes[ORDERS_KEY]) draw();
+  };
+  api.storage.onChanged.addListener(onChanged);
+
+  draw().then((archive) => {
+    if (!archive || range === ALL_SAVED) return;
+    const last = Date.parse(archive.syncedAt[range] || '');
+    if (!Number.isFinite(last) || Date.now() - last > STALE_MS) sync();
+  });
+
+  return () => {
+    mounted = false;
+    api.storage.onChanged.removeListener(onChanged);
+  };
+}

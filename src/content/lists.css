@@ -1,0 +1,66 @@
+/*
+ * TCGPlayer+ — the "Save to list" control on TCGplayer.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+.ptcg-list-control { display: inline-block; margin: 8px 0; position: relative; }
+
+.ptcg-list-button {
+  background: #f8fafc;
+  border: 1px solid #94a3b8;
+  border-radius: 999px;
+  color: #0f172a;
+  cursor: pointer;
+  font: 600 14px/1.3 inherit;
+  padding: 7px 16px;
+}
+.ptcg-list-button:hover { background: #eef2f7; }
+.ptcg-list-control[data-saved="true"] .ptcg-list-button {
+  background: #dcfce7; border-color: #16a34a; color: #14532d;
+}
+.ptcg-list-button:focus-visible { outline: 2px solid #0f172a; outline-offset: 2px; }
+
+.ptcg-list-panel {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 18%);
+  color: #0f172a;
+  font: 14px/1.4 inherit;
+  left: 0;
+  margin-top: 6px;
+  min-width: 260px;
+  padding: 12px;
+  position: absolute;
+  top: 100%;
+  z-index: 2147483000;
+}
+
+.ptcg-list-rows { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; }
+.ptcg-list-row { align-items: center; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; padding: 5px 6px; }
+.ptcg-list-row:hover { background: #f1f5f9; }
+.ptcg-list-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptcg-list-row small { color: #64748b; }
+.ptcg-list-empty { color: #64748b; margin: 4px 0 8px; }
+
+.ptcg-list-error { background: #fef2f2; border-radius: 6px; color: #991b1b; margin: 8px 0 0; padding: 6px 8px; }
+
+.ptcg-list-panel form { display: flex; gap: 6px; margin-top: 10px; }
+.ptcg-list-panel input[type="text"] {
+  border: 1px solid #cbd5e1; border-radius: 6px; flex: 1; font: inherit; min-width: 0; padding: 6px 8px;
+}
+.ptcg-list-panel form button,
+.ptcg-list-manage {
+  background: #0f172a; border: 0; border-radius: 6px; color: #ffffff;
+  cursor: pointer; font: inherit; padding: 6px 12px;
+}
+.ptcg-list-manage { background: transparent; color: #0f172a; margin-top: 8px; padding: 4px 0; text-decoration: underline; }
+
+@media (prefers-color-scheme: dark) {
+  .ptcg-list-panel { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+  .ptcg-list-row:hover { background: #1e293b; }
+  .ptcg-list-panel input[type="text"] { background: #1e293b; border-color: #475569; color: #e2e8f0; }
+  .ptcg-list-panel form button { background: #38bdf8; color: #0f172a; }
+  .ptcg-list-manage { color: #e2e8f0; }
+  .ptcg-list-error { background: #450a0a; color: #fecaca; }
+}

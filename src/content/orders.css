@@ -1,0 +1,33 @@
+/* Today's price under the price paid, on TCGplayer's Order History. */
+.ptcg-now {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #555;
+}
+.ptcg-now__price { font-weight: 600; color: #222; }
+.ptcg-now__change { white-space: nowrap; font-weight: 600; }
+/* Green: it is worth more now than you paid. Red: less. */
+.ptcg-now--higher .ptcg-now__change { color: #1a7f37; }
+.ptcg-now--lower .ptcg-now__change { color: #c62828; }
+.ptcg-now--loading, .ptcg-now--unknown { font-style: italic; color: #777; }
+
+/* The whole-page total, above the first order. */
+.ptcg-total {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid #dcdadb;
+  border-left-width: 5px;
+  border-radius: 4px;
+  background: #fafafa;
+  font-size: 13px;
+  color: #444;
+}
+.ptcg-total__title { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #666; }
+.ptcg-total__figure { display: block; margin: 2px 0; font-size: 20px; font-weight: 700; }
+.ptcg-total__detail { display: block; font-size: 11px; color: #666; }
+.ptcg-total--higher { border-left-color: #1a7f37; }
+.ptcg-total--higher .ptcg-total__figure { color: #1a7f37; }
+.ptcg-total--lower { border-left-color: #c62828; }
+.ptcg-total--lower .ptcg-total__figure { color: #c62828; }
+.ptcg-total--unknown .ptcg-total__figure { font-size: 14px; font-weight: 400; font-style: italic; color: #777; }

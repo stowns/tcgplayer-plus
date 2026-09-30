@@ -1,9 +1,9 @@
 # TCGPlayer+
 
-A Firefox extension that adds what TCGplayer is missing:
+A Firefox and Chrome extension that adds what TCGplayer is missing:
 
 - **Saved Lists.** Keep products for later in your own lists (separate from
-  Firefox bookmarks), each with a price trend and a 30-day chart.
+  your bookmarks), each with a price trend and a 30-day chart.
 - **Order History.** Your purchases laid out for reading, kept in this browser
   after TCGplayer stops listing them, with what each card would cost today and
   your total gain or loss, counting shipping on both sides.
@@ -12,22 +12,32 @@ A Firefox extension that adds what TCGplayer is missing:
 The toolbar popup has one **Dashboard** button, which opens the **TCGPlayer+**
 home page: one tab per view, opening on the one you used last.
 
-## Install (temporary, for development)
+## Install (unpacked, for development)
 
 ```bash
 npm install
 npm run build
 ```
 
-Then in Firefox: `about:debugging` → **This Firefox** → **Load Temporary
-Add-on…** → pick `dist/manifest.json`.
+The build writes one unpacked extension per browser: `dist/firefox` and
+`dist/chrome`.
 
-**Firefox does not turn on site access for you.** After installing, open
-`about:addons` → **TCGPlayer+** → **Permissions** and switch on access for
-`www.tcgplayer.com` and `store.tcgplayer.com` (and the two `tcgplayer.com` API
-hosts it lists). Without it the buttons and prices silently do not appear.
+**Firefox.** `about:debugging` → **This Firefox** → **Load Temporary Add-on…**
+→ pick `dist/firefox/manifest.json`. Firefox does not turn on site access for
+you: open `about:addons` → **TCGPlayer+** → **Permissions** and switch on access
+for `www.tcgplayer.com` and `store.tcgplayer.com` (and the two `tcgplayer.com`
+API hosts it lists). Without it the buttons and prices silently do not appear.
 
-To produce a zip for signing or for `about:addons`:
+**Chrome.** `chrome://extensions` → switch on **Developer mode** → **Load
+unpacked** → pick `dist/chrome`. Chrome grants the TCGplayer site access at
+install, so there is nothing to switch on. Chrome shows a developer-mode
+warning for unpacked extensions.
+
+Each browser keeps its own lists and saved orders. Lists can be moved between
+browsers with **Export JSON**; orders are read again from TCGplayer.
+
+To produce a zip per browser (`tcgplayer-plus-firefox.zip`,
+`tcgplayer-plus-chrome.zip`):
 
 ```bash
 npm run package
@@ -44,7 +54,7 @@ from that panel saves the card into it straight away. The button then reads
 **Manage lists** opens the Saved Lists tab of TCGPlayer+, where you
 can rename and delete lists, remove items, and export everything as JSON.
 
-These lists are deliberately separate from Firefox bookmarks: they live in the
+These lists are deliberately separate from your bookmarks: they live in the
 extension's own storage, in this browser and profile only.
 
 What is saved with each product:
@@ -153,7 +163,7 @@ Your TCGplayer purchases, laid out for reading: for each order the date, order n
 - **Where it comes from.** Opening the tab reads your Order History from TCGplayer using your signed-in session (only if the last read is over ten minutes old; **Refresh** forces it). Visiting TCGplayer's own Order History page also saves what it shows.
 - **Kept here.** Every order read is added to the extension's local storage, keyed by order number, and never removed by a later read. TCGplayer only lists the last 120 days by default, so this is how older orders are still here. **Clear saved orders** deletes them (they can be read again only while TCGplayer still lists them). Only order details are kept, never addresses or payment information.
 - **Range picker.** Last 30 / 90 / 120 days, or a year, or **All saved** (everything kept here; reads nothing). Choosing a TCGplayer range also changes the range on TCGplayer's own Order History page, exactly as its dropdown does, because TCGplayer keeps that choice on your account. A leftover search on that page is cleared too, or it would silently hide orders.
-- **If it says you are not signed in.** Sign in at TCGplayer, come back, and press Refresh. If Firefox does not send your login to the extension, visiting the real Order History page still fills the archive.
+- **If it says you are not signed in.** Sign in at TCGplayer, come back, and press Refresh. If the browser does not send your login to the extension, visiting the real Order History page still fills the archive.
 - Text and URLs from TCGplayer are only ever shown as text or as checked http(s) links.
 
 ## Today's price on TCGplayer's own Order History page
@@ -176,8 +186,9 @@ Ask $10.81
 ## Development
 
 ```bash
-npm test          # builds, then runs the unit + integration tests
-npm run build     # bundle src/ into dist/
+npm test          # builds both browsers, then runs the unit + integration tests
+npm run build     # bundle src/ into dist/firefox and dist/chrome (or: node scripts/build.js chrome)
+npm run lint      # web-ext lint of the Firefox build
 ```
 
 - `src/lib/` — the logic, dependency-injected and unit tested, with no browser
@@ -185,14 +196,22 @@ npm run build     # bundle src/ into dist/
   maths, the archive, the views as pure DOM builders.
 - `src/content/` — thin glue on TCGplayer's own pages (the Save button on
   product pages, the prices on the order page).
-- `src/background.js` — owns every network request, the caches and the request
-  pacing.
+- `src/background.js` — the price lookups, their caches and request pacing. It
+  touches no DOM, because Chrome runs it as a service worker. Reading the order
+  pages (which needs an HTML parser) happens in the Order History view instead,
+  through `src/lib/orderReader.js`.
+- `src/lib/runtime.js` — the one place that picks `browser` or `chrome` and
+  answers messages in the way both browsers accept.
+- `manifest/` — `base.json` is shared; `firefox.json` and `chrome.json` hold the
+  only differences (how the background is declared, and Firefox's add-on
+  settings). `scripts/manifest.js` merges them into each build.
 - `src/home/` — the TCGPlayer+ home page: tabs, and one module per view
   (`views/lists.js`, `views/orders.js`). An extension page, not a content script.
 - `src/popup/` — the toolbar popup.
 - `test/` — `node:test` + jsdom. The `*Integration` tests run the *built*
   bundles together (background, home page, content scripts) with a stubbed
-  WebExtension API and a stubbed TCGplayer.
+  WebExtension API and a stubbed TCGplayer, once for each browser's build.
+  `serviceWorker.test.js` runs the Chrome background with no DOM at all.
 - `test/fixtures/` holds real TCGplayer responses and order markup, with names,
   addresses and order numbers replaced by fakes.
 
@@ -202,7 +221,7 @@ npm run build     # bundle src/ into dist/
   If they change, the affected feature shows "unavailable" rather than breaking
   the page; `src/lib/tcgplayerHistory.js`, `tcgplayerListings.js` and
   `orderParse.js` are where to look, and the fixtures are where to start.
-- Whether Firefox sends your TCGplayer login when the extension reads your order
+- Whether the browser sends your TCGplayer login when the extension reads your order
   pages cannot be assumed. If the Order History tab says you are not signed in
   when you are, visiting TCGplayer's own Order History page still saves what it
   shows.

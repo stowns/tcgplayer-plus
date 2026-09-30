@@ -12,8 +12,9 @@ import {
 import {
   renderOrders, renderNotice, updateResult, itemKeyOf, describeSync, describeAge,
 } from '../../lib/ordersView.js';
+import { api } from '../../lib/runtime.js';
+import { readOrders } from '../../lib/orderReader.js';
 
-const api = globalThis.browser || globalThis.chrome;
 const storage = api.storage.local;
 
 const RANGE_KEY = 'ptcg.ordersRange';
@@ -128,7 +129,12 @@ export function mount(root) {
     say('Reading your orders from TCGplayer…');
     let result;
     try {
-      result = await api.runtime.sendMessage({ type: 'sync-orders', range });
+      // Read here, not in the background: a Chrome background has no HTML parser.
+      result = await readOrders({ range }, {
+        fetch: (...args) => window.fetch(...args),
+        parseHtml: (html) => new DOMParser().parseFromString(html, 'text/html'),
+        storage,
+      });
     } catch (err) {
       result = { status: 'error', error: err && err.message ? err.message : String(err), count: 0 };
     }

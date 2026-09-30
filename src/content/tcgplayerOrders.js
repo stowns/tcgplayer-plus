@@ -10,8 +10,8 @@ import { parseOrderItems, showNow, showTotal, isPending, isOrderHistoryPath } fr
 import { parseOrders } from '../lib/orderParse.js';
 import { archiveOrders } from '../lib/ordersArchive.js';
 import { costLine } from '../lib/orderCost.js';
+import { api } from '../lib/runtime.js';
 
-const api = globalThis.browser || globalThis.chrome;
 
 const UNAVAILABLE = { status: 'unavailable' };
 

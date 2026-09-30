@@ -1,7 +1,8 @@
 /*
  * TCGPlayer+ — background page.
- * Owns every network request, the cache and the request pacing, so the content
+ * Owns the price lookups, their caches and their request pacing, so the content
  * scripts and pages stay thin and lookups for the same card are shared.
+ * It touches no DOM: in Chrome this runs as a service worker.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -10,12 +11,9 @@ import { createCache, singleFlight } from './lib/cache.js';
 import { createThrottle } from './lib/throttle.js';
 import { lookupTrend, trendCacheKey, TREND_CACHE_TTL_MS } from './lib/trendLookup.js';
 import { lookupListing, listingCacheKey, LISTING_CACHE_TTL_MS } from './lib/listingLookup.js';
-import { syncOrders } from './lib/orderSync.js';
-import { archiveOrders } from './lib/ordersArchive.js';
+import { api, onMessage } from './lib/runtime.js';
 
-const api = globalThis.browser || globalThis.chrome;
 const storage = api.storage.local;
-const parser = new DOMParser();
 
 // --- TCGplayer price trends ------------------------------------------------
 
@@ -61,61 +59,8 @@ function postJson(url, body) {
 
 const lookupListingOnce = singleFlight((_key, item) => lookupListing(item, { postJson, cache: listingCache }));
 
-// --- TCGplayer order history (the Order History view) ----------------------
-
-// Its own queue, so a burst of price lookups never delays reading your orders.
-const orderThrottle = createThrottle({ concurrency: 1, minIntervalMs: 250 });
-
-async function getOrderPage(url) {
-  return orderThrottle.run(async () => {
-    const response = await fetch(url, { credentials: 'include', redirect: 'follow', headers: { Accept: 'text/html' } });
-    return { ok: response.ok, status: response.status, url: response.url, text: await response.text() };
-  });
-}
-
-// What TCGplayer's own date-range dropdown sends (an AJAX form post with the page's token).
-function postOrderFilter(url, body, token) {
-  return orderThrottle.run(async () => {
-    const response = await fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-        __RequestVerificationToken: token,
-      },
-      body,
-    });
-    return { ok: response.ok, status: response.status };
-  });
-}
-
-/** Read the orders, keep them, and say how it went. Only a complete read counts as "synced". */
-async function handleSyncOrders(range) {
-  const result = await syncOrders({ range }, {
-    getText: getOrderPage,
-    postForm: postOrderFilter,
-    parseHtml: (html) => parser.parseFromString(html, 'text/html'),
-  });
-  let added = 0;
-  let updated = 0;
-  if (result.orders.length) {
-    ({ added, updated } = await archiveOrders(storage, result.orders, {
-      range: result.status === 'ok' && result.range ? result.range : undefined,
-    }));
-  }
-  return {
-    status: result.status, error: result.error || '', range: result.range,
-    rangeApplied: result.rangeApplied, pages: result.pages, count: result.orders.length, added, updated,
-  };
-}
-
-// Two tabs asking at once share one read.
-const syncOrdersOnce = singleFlight((_key, range) => handleSyncOrders(range));
-
-api.runtime.onMessage.addListener((message) => {
+onMessage((message) => {
   if (!message) return undefined;
-  // Returning a promise is the WebExtension (Firefox) way to reply async.
   if (message.type === 'price-trend') {
     const item = message.item || {};
     return lookupTrendOnce(trendCacheKey(item), item).catch(() => ({
@@ -126,10 +71,6 @@ api.runtime.onMessage.addListener((message) => {
   if (message.type === 'listing-price') {
     const item = message.item || {};
     return lookupListingOnce(listingCacheKey(item), item).catch(() => ({ status: 'unavailable' }));
-  }
-  if (message.type === 'sync-orders') {
-    return syncOrdersOnce(String(message.range || ''), message.range || undefined)
-      .catch((err) => ({ status: 'error', error: String(err && err.message ? err.message : err), count: 0, added: 0, updated: 0 }));
   }
   if (message.type === 'open-lists') {
     return api.tabs.create({ url: api.runtime.getURL('home/home.html#lists') }).then(() => ({ opened: true }));

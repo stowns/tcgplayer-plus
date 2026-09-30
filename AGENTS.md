@@ -2,7 +2,7 @@
 
 
 ## Architecture
-- Firefox browser extension
+- Browser extension for Firefox and Chrome (MV3), one codebase, built per browser into dist/firefox and dist/chrome
 
 ## Testing
 - Before starting a task, check if affected source code has adequate unit test coverage

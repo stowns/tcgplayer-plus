@@ -7,8 +7,8 @@
 import { loadLists } from '../lib/listsStorage.js';
 import { countItems } from '../lib/lists.js';
 import { cachedLookupKeys } from '../lib/cacheKeys.js';
+import { api } from '../lib/runtime.js';
 
-const api = globalThis.browser || globalThis.chrome;
 const storage = api.storage.local;
 const status = document.getElementById('status');
 

@@ -1,15 +1,16 @@
 {
   "name": "tcgplayer-plus",
   "version": "1.0.0",
-  "description": "Firefox extension for TCGplayer: saved lists with price trends, and your order history with what each card would cost today.",
+  "description": "Firefox and Chrome extension for TCGplayer: saved lists with price trends, and your order history with what each card would cost today.",
   "directories": {
     "test": "test"
   },
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build.js",
-    "package": "node scripts/build.js && cd dist && zip -qr ../tcgplayer-plus.zip . && echo packaged",
-    "pretest": "npm run build"
+    "package": "node scripts/build.js && for t in firefox chrome; do (cd dist/$t && zip -qr ../../tcgplayer-plus-$t.zip .); done && echo packaged",
+    "pretest": "npm run build",
+    "lint": "npx web-ext lint --source-dir dist/firefox"
   },
   "author": "",
   "license": "GPL-3.0-or-later",

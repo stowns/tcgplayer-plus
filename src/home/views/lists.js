@@ -10,8 +10,8 @@ import {
   createList, renameList, deleteList, removeItem, setListSort, listSort,
 } from '../../lib/lists.js';
 import { needsHistory, needsAsk, defaultDirection, askKey } from '../../lib/listsSort.js';
+import { api } from '../../lib/runtime.js';
 
-const api = globalThis.browser || globalThis.chrome;
 const storage = api.storage.local;
 
 function make(tag, props = {}, text) {

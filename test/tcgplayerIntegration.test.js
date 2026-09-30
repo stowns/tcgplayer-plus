@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { PRODUCT_PAGE, PRODUCT_URL } from './fixtures/tcgplayer.js';
 
@@ -19,7 +20,7 @@ async function load(initial = {}) {
   const data = { ...initial };
   const listeners = [];
   const messages = [];
-  window.browser = {
+  window[apiName()] = {
     runtime: { sendMessage: async (m) => { messages.push(m); return {}; } },
     storage: {
       local: {
@@ -32,12 +33,14 @@ async function load(initial = {}) {
       onChanged: { addListener: (fn) => listeners.push(fn) },
     },
   };
-  window.eval(await readFile('dist/content/tcgplayerProduct.js', 'utf8'));
+  window.eval(await readFile(dist('content/tcgplayerProduct.js'), 'utf8'));
   await settle();
   return { window, document: window.document, data, messages };
 }
 
 const button = (d) => d.querySelector('.ptcg-list-button');
+
+forEachBrowser(() => {
 
 test('the built script adds a Save control to the product page', async () => {
   const { document } = await load();
@@ -160,4 +163,6 @@ test('the panel stays open while ticking a list, then closes on an outside click
   button(document).click();
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(panel().hidden, true, 'Escape closes it too');
+});
+
 });

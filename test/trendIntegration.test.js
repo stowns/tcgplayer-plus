@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { PIKACHU_HISTORY, GENESECT_HISTORY } from './fixtures/tcgplayerHistory.js';
 
@@ -50,7 +51,7 @@ async function startBackground({ failFeeds = false } = {}) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
   const requested = [];
-  let listener = null;
+  const bus = messageBus();
   window.fetch = async (url) => {
     // The lists page also asks for each card's ask; these tests are about the history feed.
     if (/\/listings$/.test(url)) return { ok: true, status: 200, json: async () => ({ results: [{ totalResults: 0, results: [] }] }) };
@@ -60,13 +61,13 @@ async function startBackground({ failFeeds = false } = {}) {
     return { ok: true, status: 200, json: async () => FEEDS[id] };
   };
   const local = storageArea();
-  window.browser = {
+  window[apiName()] = {
     storage: { local },
-    runtime: { onMessage: { addListener: (fn) => { listener = fn; } } },
+    runtime: bus.runtime,
     tabs: { create: async () => ({}) },
   };
-  window.eval(await readFile('dist/background.js', 'utf8'));
-  return { requested, local, send: (message) => listener(message) };
+  window.eval(await readFile(dist('background.js'), 'utf8'));
+  return { requested, local, send: bus.send };
 }
 
 async function startListsPage(background) {
@@ -88,14 +89,14 @@ async function startListsPage(background) {
   window.IntersectionObserver = class extends Original {
     constructor(cb) { super(cb); instances.push(this); }
   };
-  window.browser = {
+  window[apiName()] = {
     storage: {
       local: storageArea({ lists: LISTS }),
       onChanged: { addListener: () => {}, removeListener: () => {} },
     },
     runtime: { sendMessage: (m) => background.send(m) },
   };
-  window.eval(await readFile('dist/home/home.js', 'utf8'));
+  window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
   return {
     document: window.document,
@@ -106,6 +107,8 @@ async function startListsPage(background) {
 
 const trendOf = (d, name) => [...d.querySelectorAll('.item')]
   .find((row) => row.textContent.includes(name)).querySelector('.trend');
+
+forEachBrowser(() => {
 
 test('every item starts on "Checking trend" and nothing is fetched until it is on screen', async () => {
   const bg = await startBackground();
@@ -175,4 +178,6 @@ test('a request with no product id is answered, not thrown', async () => {
   const r = await bg.send({ type: 'price-trend', item: {} });
   assert.equal(r.direction, 'unknown');
   assert.equal(bg.requested.length, 0);
+});
+
 });

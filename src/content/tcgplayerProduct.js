@@ -12,8 +12,8 @@ import { loadLists, saveLists, LISTS_KEY } from '../lib/listsStorage.js';
 import {
   createList, addItem, removeItem, listsContaining, itemKey,
 } from '../lib/lists.js';
+import { api } from '../lib/runtime.js';
 
-const api = globalThis.browser || globalThis.chrome;
 const storage = api.storage.local;
 
 let control = null;

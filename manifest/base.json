@@ -4,17 +4,6 @@
   "version": "1.0.0",
   "description": "Save TCGplayer products to your own lists with price trends, and see your order history with what each card would cost today, including shipping.",
   "homepage_url": "https://github.com/simontownsend/pokemon-tcg-browser-extension",
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "tcgplayer-plus@simontownsend",
-      "strict_min_version": "142.0",
-      "data_collection_permissions": {
-        "required": [
-          "none"
-        ]
-      }
-    }
-  },
   "permissions": [
     "storage"
   ],
@@ -24,11 +13,6 @@
     "https://infinite-api.tcgplayer.com/*",
     "https://mp-search-api.tcgplayer.com/*"
   ],
-  "background": {
-    "scripts": [
-      "background.js"
-    ]
-  },
   "content_scripts": [
     {
       "matches": [

@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { ORDER_PAGE, ORDER_URL } from './fixtures/orderHistory.js';
 import { LAPRAS_LISTINGS, NO_LISTINGS } from './fixtures/tcgplayerListings.js';
@@ -31,20 +32,20 @@ async function startBackground() {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
   const requests = [];
-  let listener = null;
+  const bus = messageBus();
   window.fetch = async (url, init) => {
     requests.push({ url, init });
     const id = url.match(/product\/(\d+)\/listings/)[1];
     if (!feeds[id]) return { ok: false, status: 503, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => feeds[id] };
   };
-  window.browser = {
+  window[apiName()] = {
     storage: { local: storageArea() },
-    runtime: { onMessage: { addListener: (fn) => { listener = fn; } } },
+    runtime: bus.runtime,
     tabs: { create: async () => ({}) },
   };
-  window.eval(await readFile('dist/background.js', 'utf8'));
-  return { requests, send: (m) => listener(m) };
+  window.eval(await readFile(dist('background.js'), 'utf8'));
+  return { requests, send: bus.send };
 }
 
 /** Lookups run through a throttle, so wait for the page to finish rather than guess a delay. */
@@ -61,13 +62,15 @@ async function openOrders(background, html = ORDER_PAGE, url = ORDER_URL) {
   });
   const { window } = dom;
   const sent = [];
-  window.browser = { runtime: { sendMessage: (m) => { sent.push(m); return background.send(m); } } };
-  window.eval(await readFile('dist/content/tcgplayerOrders.js', 'utf8'));
+  window[apiName()] = { runtime: { sendMessage: (m) => { sent.push(m); return background.send(m); } } };
+  window.eval(await readFile(dist('content/tcgplayerOrders.js'), 'utf8'));
   await untilPricesArrive(window.document);
   return { window, document: window.document, sent };
 }
 
 const rowFor = (doc, name) => [...doc.querySelectorAll('tbody tr')].find((r) => r.textContent.includes(name));
+
+forEachBrowser(() => {
 
 test('each purchased item gets today\'s price and how it compares with what was paid', async () => {
   const bg = await startBackground();
@@ -172,4 +175,6 @@ test('the page settles: drawing the total does not trigger more drawing', async 
   new window.MutationObserver((records) => { changes += records.length; }).observe(document.documentElement, { childList: true, subtree: true });
   await settle(400);
   assert.equal(changes, 0, 'no further page changes once every price is in');
+});
+
 });

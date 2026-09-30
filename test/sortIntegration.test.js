@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { PIKACHU_HISTORY, GENESECT_HISTORY } from './fixtures/tcgplayerHistory.js';
 import { NO_LISTINGS } from './fixtures/tcgplayerListings.js';
@@ -63,7 +64,7 @@ async function startBackground() {
   const { window } = dom;
   const requested = [];
   const asked = [];
-  let listener = null;
+  const bus = messageBus();
   window.fetch = async (url) => {
     if (/\/listings$/.test(url)) {
       const id = url.match(/product\/(\d+)\/listings/)[1];
@@ -75,13 +76,13 @@ async function startBackground() {
     if (!FEEDS[id]) return { ok: false, status: 503, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => FEEDS[id] };
   };
-  window.browser = {
+  window[apiName()] = {
     storage: { local: storageArea() },
-    runtime: { onMessage: { addListener: (fn) => { listener = fn; } } },
+    runtime: bus.runtime,
     tabs: { create: async () => ({}) },
   };
-  window.eval(await readFile('dist/background.js', 'utf8'));
-  return { requested, asked, send: (m) => listener(m) };
+  window.eval(await readFile(dist('background.js'), 'utf8'));
+  return { requested, asked, send: bus.send };
 }
 
 async function openLists(background, local = storageArea({ lists: freshLists() })) {
@@ -91,11 +92,11 @@ async function openLists(background, local = storageArea({ lists: freshLists() }
   });
   const { window } = dom;
   window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
-  window.browser = {
+  window[apiName()] = {
     storage: { local, onChanged: { addListener: () => {}, removeListener: () => {} } },
     runtime: { sendMessage: (m) => background.send(m) },
   };
-  window.eval(await readFile('dist/home/home.js', 'utf8'));
+  window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
   const d = window.document;
   const section = (name) => [...d.querySelectorAll('.list')].find((l) => l.querySelector('.list__name').textContent === name);
@@ -115,6 +116,8 @@ async function openLists(background, local = storageArea({ lists: freshLists() }
 }
 
 const idle = (bg, page, n, field = 'requested') => until(() => bg[field].length === n && !page.document.querySelector('#status').textContent);
+
+forEachBrowser(() => {
 
 test('every list sorts by date added, newest first, until it is told otherwise', async () => {
   const bg = await startBackground();
@@ -277,4 +280,6 @@ test('a list sorted by date needs nothing looked up, even when another list is s
   await page.choose('Buy', 'ask');
   await idle(bg, page, 2, 'asked');
   assert.equal(bg.asked.length, 2, 'only Buy\'s two cards, not Watching\'s Mystery Card');
+});
+
 });

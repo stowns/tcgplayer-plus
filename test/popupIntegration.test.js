@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
@@ -15,7 +16,7 @@ async function openPopup(data = {}) {
   const created = [];
   let closed = false;
   window.close = () => { closed = true; };
-  window.browser = {
+  window[apiName()] = {
     storage: { local: {
       get: async (keys) => (keys === null ? { ...data } : Object.fromEntries([].concat(keys).filter((k) => k in data).map((k) => [k, data[k]]))),
       remove: async (keys) => { [].concat(keys).forEach((k) => delete data[k]); },
@@ -23,7 +24,7 @@ async function openPopup(data = {}) {
     runtime: { getURL: (path) => `moz-extension://test/${path}` },
     tabs: { create: async (options) => { created.push(options.url); } },
   };
-  window.eval(await readFile('dist/popup/popup.js', 'utf8'));
+  window.eval(await readFile(dist('popup/popup.js'), 'utf8'));
   await settle();
   return { document: window.document, created, data, wasClosed: () => closed };
 }
@@ -31,6 +32,8 @@ async function openPopup(data = {}) {
 const list = (n) => ({ id: `l${n}`, name: `List ${n}`, createdAt: '', updatedAt: '', items: [
   { key: `${n}:english`, productId: String(n), language: 'English', name: 'Card', savedAt: '' },
 ] });
+
+forEachBrowser(() => {
 
 test('the popup is TCGPlayer+ with one button into the dashboard', async () => {
   const { document } = await openPopup();
@@ -72,4 +75,6 @@ test('clearing an empty cache says so in the singular correctly', async () => {
   page.document.getElementById('clearCache').click();
   await settle();
   assert.equal(page.document.getElementById('status').textContent, 'Cleared 1 cached lookup.');
+});
+
 });

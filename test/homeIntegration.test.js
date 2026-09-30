@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { ORDERS, orderPage, SIGNED_OUT_PAGE } from './fixtures/orderHistoryFull.js';
 import { LAPRAS_LISTINGS, NO_LISTINGS } from './fixtures/tcgplayerListings.js';
@@ -80,15 +81,15 @@ async function startBackground(site, local = storageArea()) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
   freezeClock(window);
-  let listener = null;
+  const bus = messageBus();
   window.fetch = site.fetch;
-  window.browser = {
+  window[apiName()] = {
     storage: { local },
-    runtime: { onMessage: { addListener: (fn) => { listener = fn; } } },
+    runtime: bus.runtime,
     tabs: { create: async () => ({}) },
   };
-  window.eval(await readFile('dist/background.js', 'utf8'));
-  return { local, send: (m) => listener(m) };
+  window.eval(await readFile(dist('background.js'), 'utf8'));
+  return { local, site, send: bus.send };
 }
 
 async function openHome(background, hash = '#orders') {
@@ -98,16 +99,17 @@ async function openHome(background, hash = '#orders') {
   });
   const { window } = dom;
   freezeClock(window);
+  window.fetch = background.site.fetch; // the page reads the order pages itself
   window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
   const sent = [];
-  window.browser = {
+  window[apiName()] = {
     storage: { local: background.local, onChanged: {
       addListener: (fn) => background.local.listeners.push(fn),
       removeListener: (fn) => { const i = background.local.listeners.indexOf(fn); if (i >= 0) background.local.listeners.splice(i, 1); },
     } },
     runtime: { sendMessage: (m) => { sent.push(m); return background.send(m); } },
   };
-  window.eval(await readFile('dist/home/home.js', 'utf8'));
+  window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
   return {
     window, document: window.document, sent,
@@ -117,6 +119,8 @@ async function openHome(background, hash = '#orders') {
 const hasButton = (d, label) => [...d.querySelectorAll('#view button')].some((b) => b.textContent === label);
 const selectedTab = (d) => d.querySelector('.tab[aria-selected="true"]').getAttribute('data-view');
 const orderNumbers = (d) => [...d.querySelectorAll('.order')].map((a) => a.getAttribute('data-order'));
+
+forEachBrowser(() => {
 
 test('the home page opens on Saved Lists, with both tabs', async () => {
   const bg = await startBackground(fakeTcgplayer());
@@ -170,7 +174,8 @@ test('opening Order History reads TCGplayer, keeps the orders and shows them wit
   const bg = await startBackground(site);
   const { document, sent } = await openHome(bg, '#orders');
   await until(() => document.querySelectorAll('.order').length === 6);
-  assert.deepEqual(sent.filter((m) => m.type === 'sync-orders').map((m) => m.range), ['Last 30 Days']);
+  assert.equal(site.posts.length, 0, 'the range already selected is not changed');
+  assert.equal(sent.filter((m) => /order/.test(m.type)).length, 0, 'the background is not involved in reading orders');
   assert.equal(orderNumbers(document).length, 6);
   assert.equal(orderNumbers(document)[0], 'TEST0001-AAAAAA-BBBBB', 'newest first');
   assert.equal(Object.keys(bg.local.data.orders.orders).length, 6);
@@ -220,7 +225,6 @@ test('orders already in the archive are shown at once, and are not re-read if re
   assert.equal(second.document.querySelectorAll('.order').length, 6, 'drawn from the archive immediately');
   await settle(300);
   assert.equal(orderReads(), before, 'a read from minutes ago is not repeated');
-  assert.equal(second.sent.filter((m) => m.type === 'sync-orders').length, 0);
 });
 
 test('Refresh reads again, and an order that has aged out of TCGplayer\'s window is kept', async () => {
@@ -348,8 +352,8 @@ test('visiting TCGplayer\'s own Order History saves what it shows, and the open 
   const dom = new JSDOM(html, {
     url: 'https://store.tcgplayer.com/myaccount/orderhistory', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole(),
   });
-  dom.window.browser = { storage: { local: bg.local }, runtime: { sendMessage: (m) => bg.send(m) } };
-  dom.window.eval(await readFile('dist/content/tcgplayerOrders.js', 'utf8'));
+  dom.window[apiName()] = { storage: { local: bg.local }, runtime: { sendMessage: (m) => bg.send(m) } };
+  dom.window.eval(await readFile(dist('content/tcgplayerOrders.js'), 'utf8'));
   await until(() => Object.keys(bg.local.data.orders?.orders || {}).length === 3);
 
   assert.equal(Object.keys(bg.local.data.orders.orders).length, 3);
@@ -362,6 +366,8 @@ test('visiting TCGplayer\'s own Order History saves what it shows, and the open 
 
 test('a message of an unknown type is left unanswered, and an empty one is ignored', async () => {
   const bg = await startBackground(fakeTcgplayer());
-  assert.equal(bg.send({ type: 'no-such-message' }), undefined);
-  assert.equal(bg.send(null), undefined);
+  assert.equal(await bg.send({ type: 'no-such-message' }), undefined);
+  assert.equal(await bg.send(null), undefined);
+});
+
 });

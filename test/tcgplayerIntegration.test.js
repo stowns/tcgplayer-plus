@@ -9,10 +9,10 @@ import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionAp
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { PRODUCT_PAGE, PRODUCT_URL } from './fixtures/tcgplayer.js';
 
-const settle = () => new Promise((r) => setTimeout(r, 30));
+const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
-async function load(initial = {}) {
-  const dom = new JSDOM(PRODUCT_PAGE, {
+async function load(initial = {}, page = PRODUCT_PAGE) {
+  const dom = new JSDOM(page, {
     url: PRODUCT_URL, runScripts: 'outside-only', pretendToBeVisual: true,
     virtualConsole: new VirtualConsole(),
   });
@@ -47,6 +47,70 @@ test('the built script adds a Save control to the product page', async () => {
   assert.ok(button(document), 'a save button is injected');
   assert.equal(button(document).textContent, 'Save to list');
   assert.ok(document.querySelector('.product-details__header .ptcg-list-control'), 'next to the title');
+});
+
+// A layout of the product page with no header and no name in the body, only the metadata.
+const NO_HEADER_PAGE = PRODUCT_PAGE
+  .replace(/<div class="product-details__header">[\s\S]*?<\/h1>\s*<\/div>/, '')
+  .replace(/<div class="product-details__spotlight">[\s\S]*?<\/div><\/div>/, '');
+
+test('a page with no header still gets the control, in a bar at the top of the product section', async () => {
+  assert.doesNotMatch(NO_HEADER_PAGE, /product-details__name/, 'the fixture really has no heading');
+  const bare = await load({ lists: { version: 1, lists: [{ id: 'a', name: 'Watchlist', items: [] }] } }, NO_HEADER_PAGE);
+  assert.ok(bare.document.querySelector('.product-details > .ptcg-save-bar .ptcg-list-control'));
+  assert.equal(button(bare.document).textContent, 'Save to list');
+  assert.equal(bare.document.querySelectorAll('.ptcg-list-control').length, 1);
+  button(bare.document).click();
+  const box = bare.document.querySelector('.ptcg-list-panel input[type="checkbox"]');
+  box.checked = true;
+  box.dispatchEvent(new bare.window.Event('change'));
+  await settle();
+  const [saved] = bare.data.lists.lists[0].items;
+  assert.equal(saved.productId, '642621');
+  assert.equal(saved.name, 'Genesect ex', 'the name comes from the page metadata');
+});
+
+// The button is drawn as soon as the header exists, which can be before the page has put the card's name in it.
+const NAME_LATER_PAGE = PRODUCT_PAGE
+  .replace(/<h1 class="product-details__name">[^<]*<\/h1>/, '<h1 class="product-details__name"></h1>')
+  .replace(/<meta property="og:title"[^>]*>/g, '');
+
+test('a card is saved with the name the page shows when you save, not when the button was drawn', async () => {
+  assert.doesNotMatch(NAME_LATER_PAGE, /og:title/);
+  const page = await load({ lists: { version: 1, lists: [{ id: 'a', name: 'Watchlist', items: [] }] } }, NAME_LATER_PAGE);
+  const { document, window, data } = page;
+  assert.ok(button(document), 'the button is there before the name is');
+  button(document).click();
+  const tick = () => {
+    const box = document.querySelector('.ptcg-list-panel input[type="checkbox"]');
+    box.checked = true;
+    box.dispatchEvent(new window.Event('change'));
+    return settle();
+  };
+
+  await tick();
+  assert.equal(data.lists.lists[0].items.length, 0, 'nothing is saved without a name');
+  assert.match(document.querySelector('.ptcg-list-error').textContent, /not finished loading/i);
+
+  document.querySelector('h1.product-details__name').textContent = 'Maushold - 146/128 - ME: 30th Celebration (30C)';
+  await tick();
+  const [saved] = data.lists.lists[0].items;
+  assert.equal(saved.name, 'Maushold');
+  assert.equal(saved.setName.length > 0, true);
+});
+
+test('when the header turns up after the bar was used, the control moves beside the name', async () => {
+  const bare = await load({}, NO_HEADER_PAGE);
+  const { document } = bare;
+  assert.ok(document.querySelector('.ptcg-save-bar .ptcg-list-control'));
+  const header = document.createElement('div');
+  header.className = 'product-details__header';
+  header.innerHTML = '<h1 class="product-details__name">Genesect ex - 169/086 - SV: Black Bolt (BLK)</h1>';
+  document.querySelector('.product-details').append(header);
+  await settle(80);
+  assert.ok(header.querySelector('.ptcg-list-control'), 'moved beside the name');
+  assert.equal(document.querySelector('.ptcg-save-bar'), null, 'the empty bar is gone');
+  assert.equal(document.querySelectorAll('.ptcg-list-control').length, 1);
 });
 
 test('creating a list from the panel saves the card into it', async () => {

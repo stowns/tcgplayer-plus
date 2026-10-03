@@ -12,6 +12,8 @@ import { currentPrice, volatility } from './priceTrend.js';
 import { SORTS, sortItems, defaultDirection, directionLabel, askKey } from './listsSort.js';
 import { landedNow } from './orderCost.js';
 import { listSort } from './lists.js';
+import { isRetrying, retryText, retryTitle } from './retryState.js';
+import { PAGE_SIZES, pageOf, parsePageSize, resolveSelection } from './listsPage.js';
 
 export function itemSubtitle(item) {
   return [item.setName, item.number, item.rarity].filter(Boolean).join(' · ');
@@ -51,6 +53,7 @@ export function formatChange(pct) {
 
 export function trendSummary(trend) {
   if (!trend) return 'Checking trend\u2026';
+  if (isRetrying(trend)) return retryText(trend);
   switch (trend.direction) {
     case 'up': return `\u25B2 ${formatChange(trend.pct)}`;
     case 'down': return `\u25BC ${formatChange(trend.pct)}`;
@@ -62,6 +65,7 @@ export function trendSummary(trend) {
 
 export function trendTooltip(trend) {
   if (!trend) return '';
+  if (isRetrying(trend)) return retryTitle(trend);
   if (trend.direction === 'unknown') {
     return trend.reason === 'not-enough-sales'
       ? 'Too few recent sales to call a direction. It needs at least 5 sales on 3 different days, in each of two comparison periods.'
@@ -93,12 +97,16 @@ function turnNote(trend) {
   return `but ${trend.turning === 'down' ? 'falling' : 'rising'} in the last ${days} days`;
 }
 
-/** @param {object|null} trend null while it is still being fetched */
-export function renderTrend(doc, trend) {
+/** @param {object|null} trend null while it is still being fetched, or a retrying state (see retryState.js) */
+export function renderTrend(doc, original) {
+  // While it is being retried there is no trend yet; it is drawn as loading, with the reason.
+  const retrying = isRetrying(original);
+  const trend = retrying ? null : original;
   const state = !trend ? 'loading' : trend.direction;
   const box = el(doc, 'div', `trend trend--${state}`);
   box.setAttribute('data-trend', state);
-  box.setAttribute('title', trendTooltip(trend));
+  box.setAttribute('title', trendTooltip(original));
+  if (retrying) box.setAttribute('data-retrying', '1');
 
   if (trend && trend.direction !== 'unknown') {
     const word = { up: 'up', down: 'down', flat: 'flat' }[trend.direction];
@@ -113,7 +121,7 @@ export function renderTrend(doc, trend) {
     if (trend.turning) box.setAttribute('data-turning', trend.turning);
   }
 
-  box.append(el(doc, 'div', 'trend__summary', trendSummary(trend)));
+  box.append(el(doc, 'div', 'trend__summary', trendSummary(original)));
   if (trend && trend.direction !== 'unknown') {
     box.append(el(doc, 'div', 'trend__label', `vs previous ${trend.windowDays} days`));
     if (trend.turning) box.append(el(doc, 'div', 'trend__note', turnNote(trend)));
@@ -165,6 +173,7 @@ export function updateTrend(container, key, trend) {
  */
 export function askSummary(ask) {
   if (!ask) return 'Checking ask\u2026';
+  if (isRetrying(ask)) return retryText(ask);
   if (ask.status === 'none') return 'Ask: none listed';
   const total = landedNow(ask);
   if (total === null) return 'Ask unavailable';
@@ -175,7 +184,12 @@ export function askSummary(ask) {
 }
 
 export function renderAsk(doc, ask) {
-  const node = el(doc, 'span', `item__ask item__ask--${!ask ? 'loading' : landedNow(ask) === null ? 'unknown' : 'ok'}`, askSummary(ask));
+  const retrying = isRetrying(ask);
+  const node = el(doc, 'span', `item__ask item__ask--${!ask || retrying ? 'loading' : landedNow(ask) === null ? 'unknown' : 'ok'}`, askSummary(ask));
+  if (retrying) {
+    node.setAttribute('data-retrying', '1');
+    node.setAttribute('title', retryTitle(ask));
+  }
   if (ask && landedNow(ask) !== null) {
     node.setAttribute('title', `The cheapest live listing in the same condition and printing, with its shipping`
       + `${ask.seller ? `, from ${ask.seller}` : ''}. This is what it costs to buy, unlike TCGplayer\u2019s Market Price.`);
@@ -277,7 +291,7 @@ function renderSortControl(doc, list, sort, handlers) {
   return wrap;
 }
 
-function renderList(doc, list, handlers, trends, asks) {
+function renderList(doc, list, handlers, trends, asks, view = {}) {
   const section = el(doc, 'section', 'list');
 
   const header = el(doc, 'header', 'list__header');
@@ -304,20 +318,80 @@ function renderList(doc, list, handlers, trends, asks) {
     section.append(el(doc, 'p', 'list__empty', 'Nothing saved here yet.'));
     return section;
   }
+  // Paging comes after sorting, so page 1 is always the top of the chosen order.
+  const page = pageOf(sortItems(list.items, sort, { trends, asks }), { page: view.page, size: view.size });
   const items = el(doc, 'ul', 'item-list');
-  for (const item of sortItems(list.items, sort, { trends, asks })) items.append(renderItem(doc, list, item, handlers, trends, asks));
-  section.append(items);
+  for (const item of page.items) items.append(renderItem(doc, list, item, handlers, trends, asks));
+  section.append(renderPager(doc, page, handlers, 'pager--top'), items, renderPager(doc, page, handlers, 'pager--bottom'));
   return section;
 }
 
-export function renderLists(doc, container, state, handlers = {}, trends, asks) {
+/** "Showing 26–50 of 140  [Previous] [Next]"; nothing when everything fits on one page. */
+function renderPager(doc, page, handlers, className) {
+  const nav = el(doc, 'nav', `pager ${className}`);
+  nav.setAttribute('aria-label', 'Pages');
+  if (page.pages <= 1) { nav.hidden = true; return nav; }
+  nav.append(el(doc, 'span', 'pager__range', `Showing ${page.from}\u2013${page.to} of ${page.total}`));
+  for (const [cls, label, target, disabled] of [
+    ['pager__prev', 'Previous', page.page - 1, page.page <= 1],
+    ['pager__next', 'Next', page.page + 1, page.page >= page.pages],
+  ]) {
+    const button = el(doc, 'button', `${cls} secondary`, label);
+    button.type = 'button';
+    button.disabled = disabled;
+    button.addEventListener('click', () => handlers.onPage && handlers.onPage(target));
+    nav.append(button);
+  }
+  return nav;
+}
+
+/** "List [Watching (6) v]  Show [25 v]": which list, and how many cards at a time. */
+function renderToolbar(doc, lists, selected, size, handlers) {
+  const bar = el(doc, 'div', 'lists-toolbar');
+
+  const listLabel = el(doc, 'label', 'lists-toolbar__field', 'List ');
+  const listSelect = el(doc, 'select', 'lists-toolbar__list');
+  for (const list of lists) {
+    const option = el(doc, 'option', '', `${list.name} (${list.items.length})`);
+    option.value = list.id;
+    option.selected = list.id === selected.id;
+    listSelect.append(option);
+  }
+  listSelect.addEventListener('change', () => handlers.onSelectList && handlers.onSelectList(listSelect.value));
+  listLabel.append(listSelect);
+
+  const sizeLabel = el(doc, 'label', 'lists-toolbar__field', 'Show ');
+  const sizeSelect = el(doc, 'select', 'lists-toolbar__size');
+  for (const choice of PAGE_SIZES) {
+    const option = el(doc, 'option', '', choice === 'all' ? 'All' : String(choice));
+    option.value = String(choice);
+    option.selected = choice === size;
+    sizeSelect.append(option);
+  }
+  sizeSelect.addEventListener('change', () => handlers.onPageSize && handlers.onPageSize(parsePageSize(sizeSelect.value)));
+  sizeLabel.append(sizeSelect);
+
+  bar.append(listLabel, sizeLabel);
+  return bar;
+}
+
+/**
+ * One list at a time, chosen from a dropdown, a page of cards at a time.
+ * @param {{selectedId?: string, size?: number|'all', page?: number}} view
+ */
+export function renderLists(doc, container, state, handlers = {}, trends, asks, view = {}) {
   container.textContent = '';
   if (state.lists.length === 0) {
     container.append(el(doc, 'p', 'empty',
       'No lists yet. Open a TCGplayer product page and choose "Save to list".'));
     return container;
   }
-  for (const list of state.lists) container.append(renderList(doc, list, handlers, trends, asks));
+  const selected = resolveSelection(state.lists, view.selectedId);
+  const size = parsePageSize(view.size);
+  container.append(
+    renderToolbar(doc, state.lists, selected, size, handlers),
+    renderList(doc, selected, handlers, trends, asks, { page: view.page, size }),
+  );
   return container;
 }
 

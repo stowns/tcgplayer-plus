@@ -8,9 +8,12 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build.js",
-    "package": "node scripts/build.js && for t in firefox chrome; do (cd dist/$t && zip -qr ../../tcgplayer-plus-$t.zip .); done && echo packaged",
+    "package": "node scripts/package.js",
     "pretest": "npm run build",
-    "lint": "npx web-ext lint --source-dir dist/firefox"
+    "lint": "npx web-ext lint --source-dir dist/firefox",
+    "build:stripes": "node scripts/build.js all --icon=stripes",
+    "package:firefox": "node scripts/package.js firefox",
+    "package:chrome": "node scripts/package.js chrome"
   },
   "author": "",
   "license": "GPL-3.0-or-later",

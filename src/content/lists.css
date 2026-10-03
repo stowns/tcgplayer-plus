@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+.ptcg-save-bar { padding: 0 16px; }
 .ptcg-list-control { display: inline-block; margin: 8px 0; position: relative; }
 
 .ptcg-list-button {

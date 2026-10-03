@@ -3,23 +3,25 @@
  * Bundles the ES modules into the flat files each manifest points at and writes
  * one unpacked extension per browser: dist/firefox and dist/chrome.
  *
- *   node scripts/build.js [firefox|chrome|all]
+ *   node scripts/build.js [firefox|chrome|all] [--icon=plus|stripes]
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 import { build } from 'esbuild';
 import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { loadManifest, TARGETS } from './manifest.js';
+import { loadManifest } from './manifest.js';
+import { parseBuildArgs } from './buildArgs.js';
+import { iconPng, iconSvg, ICON_SIZES } from './icon.js';
 
-const arg = process.argv[2] || 'all';
-const targets = arg === 'all' ? TARGETS : [arg];
-for (const t of targets) {
-  if (!TARGETS.includes(t)) {
-    console.error(`Unknown target "${t}". Use firefox, chrome or all.`);
-    process.exit(1);
-  }
+let options;
+try {
+  options = parseBuildArgs(process.argv.slice(2));
+} catch (err) {
+  console.error(err.message);
+  process.exit(1);
 }
+const { targets, icon } = options;
 
 const STATIC = [
   ['src/content/lists.css', 'content/lists.css'],
@@ -28,8 +30,6 @@ const STATIC = [
   ['src/home/home.css', 'home/home.css'],
   ['src/home/lists.css', 'home/lists.css'],
   ['src/home/orders.css', 'home/orders.css'],
-  ['src/popup/popup.html', 'popup/popup.html'],
-  ['src/popup/popup.css', 'popup/popup.css'],
   ['LICENSE', 'LICENSE'],
 ];
 
@@ -45,7 +45,6 @@ for (const target of targets) {
       'content/tcgplayerProduct': 'src/content/tcgplayerProduct.js',
       'content/tcgplayerOrders': 'src/content/tcgplayerOrders.js',
       'home/home': 'src/home/home.js',
-      'popup/popup': 'src/popup/popup.js',
     },
     outdir: out,
     bundle: true,
@@ -56,6 +55,8 @@ for (const target of targets) {
 
   await writeFile(`${out}/manifest.json`, `${JSON.stringify(await loadManifest(target), null, 2)}\n`);
   for (const [from, to] of STATIC) await cp(from, `${out}/${to}`);
-  await cp('icons', `${out}/icons`, { recursive: true });
-  console.log(`built -> ${out}/`);
+  await mkdir(`${out}/icons`, { recursive: true });
+  for (const size of ICON_SIZES) await writeFile(`${out}/icons/icon-${size}.png`, iconPng(size, icon));
+  await writeFile(`${out}/icons/icon.svg`, iconSvg(icon));
+  console.log(`built -> ${out}/ (${icon} icon)`);
 }

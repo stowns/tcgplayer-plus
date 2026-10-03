@@ -9,8 +9,8 @@ A Firefox and Chrome extension that adds what TCGplayer is missing:
   your total gain or loss, counting shipping on both sides.
 - **Prices on TCGplayer's own order page**, right under what you paid.
 
-The toolbar popup has one **Dashboard** button, which opens the **TCGPlayer+**
-home page: one tab per view, opening on the one you used last.
+Clicking the toolbar button opens the **TCGPlayer+** home page: one tab per
+view, opening on the one you used last.
 
 ## Install (unpacked, for development)
 
@@ -36,12 +36,29 @@ warning for unpacked extensions.
 Each browser keeps its own lists and saved orders. Lists can be moved between
 browsers with **Export JSON**; orders are read again from TCGplayer.
 
-To produce a zip per browser (`tcgplayer-plus-firefox.zip`,
-`tcgplayer-plus-chrome.zip`):
+### Packaging for the stores
 
 ```bash
-npm run package
+npm run package           # Chrome and Firefox, plus the source archive
+npm run package:chrome    # just the Chrome zip
+npm run package:firefox   # the Firefox zip and the source archive
 ```
+
+Each writes to `release/`, named for the version in `package.json`:
+
+- `tcgplayer-plus-<version>-chrome.zip` for the Chrome Web Store.
+- `tcgplayer-plus-<version>-firefox.zip` for addons.mozilla.org.
+- `tcgplayer-plus-<version>-source.zip`, also for addons.mozilla.org, which asks
+  for the source of any bundled code. It is the repository's files (including
+  ones not yet committed) without build output, `node_modules` or `examples/`,
+  which holds saved pages of real orders and must never be published. To build
+  it: `npm install && npm run build`.
+
+Packaging stops before building if a manifest would be refused: a description
+over Chrome's 132 characters, a name over 45, a version that is not 1 to 4
+numbers or does not match `package.json`, or a missing icon size. Bump the
+version in both `package.json` and `manifest/base.json` for each upload; the
+stores refuse a version they already have.
 
 ## Saved Lists
 
@@ -89,6 +106,21 @@ The trend chart's "Recent sales" figure is a third thing again: what the card
 has just been selling for. It is labelled that way, so it is never mistaken for
 either of the others.
 
+### Choosing a list, and paging
+
+The Saved Lists tab shows one list at a time. Pick it from the **List**
+dropdown (each entry shows its card count). **Show** sets how many cards appear
+at once: 25 (the default), 50, 75 or All. A list longer than that has a pager,
+above and below its cards: "Showing 26–50 of 140" with **Previous** and
+**Next**. Pages follow the list's own sort, so page 1 is always the top of the
+order you chose.
+
+The list you chose and the page size are remembered in this browser. Changing
+the list, the page size or a sort returns to page 1, and a new list is shown as
+soon as it is made. Prices are looked up only for the cards on the page you are
+looking at; sorting by Ask or Volatility still loads every card in the list
+shown, so the order is right across pages.
+
 ### Sorting
 
 Every list has its own sort, in its header: **Date added** (the default, newest
@@ -134,7 +166,7 @@ The details that make it trustworthy:
 - **Medians, not averages.** Real days like $13.05 on 262 units (junk bulk
   sales) or a single $440 sale on a card that trades around $75-97 would wreck a
   mean. Such days are also left off the chart, and the tooltip says so.
-- **Within ±3% is called flat.**
+- **Within ±1% is called flat.**
 - **Quiet cards widen to 14 days vs 14.** Each period needs at least 5 sales on
   3 different days; if even 14 days is too thin it says "Not enough recent
   sales" rather than guessing.
@@ -147,13 +179,47 @@ The details that make it trustworthy:
   that is good news for you.
 
 Trends are fetched only for items that scroll into view, at most two requests at
-a time, and cached for six hours (the popup's **Clear price cache** removes them). If
-TCGplayer's feed is unreachable the row says "Trend unavailable" and nothing else
-is affected. The feed is undocumented, so it could change without notice.
+a time, and cached for one hour, which is as long as TCGplayer's own response is
+good for (**Clear price cache**, at the right of the dashboard's header, removes
+them; saved lists and orders are never touched). TCGplayer's feed only accepts a
+whole range (`month`, `quarter`, ...), not "just today", so a refresh fetches the
+month again. If the feed stays unreachable the row says "Trend unavailable" and
+nothing else is affected. The feed is undocumented, so it could change without
+notice.
+
+### When TCGplayer is slow or failing
+
+Every request to TCGplayer (trends, asks, and reading your orders) goes through
+one client that retries a failure that may pass, using **exponential backoff
+with full jitter**
+([AWS Architecture Blog, "Exponential Backoff And Jitter"](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/)):
+
+- The wait before retry *n* is a random time between 0 and
+  `min(8 s, 0.5 s × 2^(n-1))`: up to 0.5, 1, 2, then 4 seconds. The randomness
+  stops many requests that failed together from coming back together.
+- Each attempt has five seconds, from when it starts until its answer has been
+  read. If it takes longer it is cancelled and counts as failed, so it is retried
+  like any other failure instead of leaving the screen waiting.
+- At most four retries, so a request is tried at most five times.
+- Retried: a dropped connection, a timeout, and HTTP 408, 425, 429, 500, 502, 503 and 504.
+  Not retried: 400, 401, 403 and 404, which would fail the same way again.
+- A server's `Retry-After` is honoured as a minimum wait; if it asks for more
+  than 30 seconds the request is given up instead.
+- Every attempt is still paced by the request throttle, and the wait between
+  attempts does not hold a slot.
+
+While a lookup is being retried the screen says so, so it never looks stuck: a
+trend or an Ask shows "Retrying (2 of 4)…" in amber, with a tooltip saying
+TCGplayer did not answer; a price on the Order History tab, or on TCGplayer's own
+order page, does the same, and the totals above count it as still loading
+("2 still loading (1 being retried)"); reading your orders says "TCGplayer did
+not answer. Retrying (1 of 4)…". If it still fails after the last retry, the
+usual "unavailable" wording appears, and a read of your orders keeps the pages it
+did get and reports that it stopped part-way.
 
 ## The TCGPlayer+ home page
 
-The toolbar popup's **Dashboard** button opens a page with one tab per view: **Saved Lists** (above) and **Order History**. It opens on the tab you used last.
+Clicking the toolbar button opens a page with one tab per view: **Saved Lists** (above) and **Order History**. It opens on the tab you used last. There is no popup in between.
 
 ### Order History tab
 
@@ -189,6 +255,7 @@ Ask $10.81
 npm test          # builds both browsers, then runs the unit + integration tests
 npm run build     # bundle src/ into dist/firefox and dist/chrome (or: node scripts/build.js chrome)
 npm run lint      # web-ext lint of the Firefox build
+npm run build:stripes # the same, with the plain-stripes icon instead of the one with a +
 ```
 
 - `src/lib/` — the logic, dependency-injected and unit tested, with no browser
@@ -196,18 +263,25 @@ npm run lint      # web-ext lint of the Firefox build
   maths, the archive, the views as pure DOM builders.
 - `src/content/` — thin glue on TCGplayer's own pages (the Save button on
   product pages, the prices on the order page).
-- `src/background.js` — the price lookups, their caches and request pacing. It
+- `src/background.js` — opens the dashboard when the toolbar button is clicked, and
+  runs the price lookups, their caches and request pacing. It
   touches no DOM, because Chrome runs it as a service worker. Reading the order
   pages (which needs an HTML parser) happens in the Order History view instead,
   through `src/lib/orderReader.js`.
+- `src/lib/retry.js`, `src/lib/httpClient.js` — the retry strategy (backoff with
+  jitter) and the one client every request to TCGplayer goes through.
+  `src/lib/retryState.js` is how a screen shows "retrying".
 - `src/lib/runtime.js` — the one place that picks `browser` or `chrome` and
   answers messages in the way both browsers accept.
+- `scripts/icon.js` — draws the icon (stripes in the TCGplayer logo's colours, in
+  its order) as PNGs and an SVG, in two variants: `plus` (the default, a white + over
+  the stripes) and `stripes` (the stripes alone).
+  `node scripts/build.js [firefox|chrome|all] [--icon=plus|stripes]`.
 - `manifest/` — `base.json` is shared; `firefox.json` and `chrome.json` hold the
   only differences (how the background is declared, and Firefox's add-on
   settings). `scripts/manifest.js` merges them into each build.
 - `src/home/` — the TCGPlayer+ home page: tabs, and one module per view
   (`views/lists.js`, `views/orders.js`). An extension page, not a content script.
-- `src/popup/` — the toolbar popup.
 - `test/` — `node:test` + jsdom. The `*Integration` tests run the *built*
   bundles together (background, home page, content scripts) with a stubbed
   WebExtension API and a stubbed TCGplayer, once for each browser's build.

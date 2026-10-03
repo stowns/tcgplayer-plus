@@ -6,6 +6,8 @@
 .orders-bar__age { color: var(--ink-soft); font-size: 13px; }
 .orders-status { color: var(--ink-soft); margin: 10px 0 0; min-height: 1.3em; }
 .orders-status[data-error="1"] { color: var(--danger); }
+.orders-status .sign-in { background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; color: var(--surface); display: inline-block; font-size: 13px; padding: 2px 12px; text-decoration: none; }
+.orders-status .sign-in:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button:disabled { cursor: default; opacity: .55; }
 
 .orders-summary { margin-top: 12px; }
@@ -57,6 +59,7 @@ a.oitem__name:hover { text-decoration: underline; }
 .ptcg-now--higher .ptcg-now__change { color: var(--gain); }
 .ptcg-now--lower .ptcg-now__change { color: var(--loss); }
 .ptcg-now--loading, .ptcg-now--unknown { font-style: italic; }
+.ptcg-now--retrying { color: var(--warn); }
 
 .order__totals { border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px 22px; justify-content: flex-end; margin: 4px 0 0; padding-top: 10px; }
 .order__total-row { display: flex; gap: 6px; }

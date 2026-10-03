@@ -10,6 +10,8 @@
  */
 
 import { createThrottle } from './throttle.js';
+import { createClient } from './httpClient.js';
+import { HttpError } from './retry.js';
 import { syncOrders } from './orderSync.js';
 import { archiveOrders } from './ordersArchive.js';
 
@@ -19,32 +21,55 @@ export const ORDER_PACE = { concurrency: 1, minIntervalMs: 250 };
 /**
  * @param {{range?: string}} options a TCGplayer range label, or none to read the range the account shows
  * @param {{fetch: typeof fetch, parseHtml: (html: string) => Document, storage: object,
- *   throttle?: {run: Function}, now?: () => string}} deps
+ *   throttle?: {run: Function}, now?: () => string, retry?: object, timeoutMs?: number,
+ *   onRetry?: (info: {retry: number, retries: number, delayMs: number}) => void}} deps
+ *   `onRetry` is told before each wait when TCGplayer did not answer and a page is about to be asked for again
  * @returns {Promise<{status: 'ok'|'partial'|'signed-out'|'error', error: string, range: string,
  *   rangeApplied: boolean, pages: number, count: number, added: number, updated: number}>}
  */
 export async function readOrders({ range } = {}, deps) {
   const throttle = deps.throttle || createThrottle(ORDER_PACE);
+  const client = createClient({ fetch: deps.fetch, throttle, retry: deps.retry, timeoutMs: deps.timeoutMs });
+  const hooks = { onRetry: deps.onRetry };
 
-  const getText = (url) => throttle.run(async () => {
-    const response = await deps.fetch(url, { credentials: 'include', redirect: 'follow', headers: { Accept: 'text/html' } });
-    return { ok: response.ok, status: response.status, url: response.url, text: await response.text() };
-  });
+  // A page that keeps failing after the retries is reported as a failed page, so a read
+  // that got part of the way is kept as "partial" rather than thrown away.
+  const exhausted = (err) => {
+    if (err instanceof HttpError) return { ok: false, status: err.status, url: '', text: '' };
+    throw err;
+  };
+
+  const getText = async (url) => {
+    try {
+      return await client.request(
+        url,
+        { credentials: 'include', redirect: 'follow', headers: { Accept: 'text/html' } },
+        hooks,
+        async (response) => ({ ok: response.ok, status: response.status, url: response.url, text: await response.text() }),
+      );
+    } catch (err) {
+      return exhausted(err);
+    }
+  };
 
   // What TCGplayer's own date-range dropdown sends: an AJAX form post carrying the page's token.
-  const postForm = (url, body, token) => throttle.run(async () => {
-    const response = await deps.fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-        __RequestVerificationToken: token,
-      },
-      body,
-    });
-    return { ok: response.ok, status: response.status };
-  });
+  const postForm = async (url, body, token) => {
+    try {
+      const response = await client.request(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+          __RequestVerificationToken: token,
+        },
+        body,
+      }, hooks);
+      return { ok: response.ok, status: response.status };
+    } catch (err) {
+      return exhausted(err);
+    }
+  };
 
   let result;
   try {

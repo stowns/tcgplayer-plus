@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
+  describeSync,
   formatOrderDate, productPageUrl, renderOrder, renderOrders, renderNotice, renderOrderChange, updateResult, itemKeyOf, linesFor,
 } from '../src/lib/ordersView.js';
 import { parseOrders } from '../src/lib/orderParse.js';
@@ -252,4 +253,14 @@ test('shipping is spread over a multi-item order in proportion to price', () => 
   const lis = [...renderOrder(doc(), a).querySelectorAll('.oitem')];
   assert.equal(lis[0].querySelector('.oitem__paid-detail').textContent, '$10.00 + $1.00 shipping');
   assert.equal(lis[1].querySelector('.oitem__paid-detail').textContent, '$20.00 + $2.00 shipping');
+});
+
+test('describeSync: signed out offers the sign-in page, and no other outcome does', () => {
+  const out = describeSync({ status: 'signed-out', count: 0 });
+  assert.match(out.text, /not signed in to TCGplayer/);
+  assert.equal(out.isError, true);
+  assert.equal(out.signInUrl, 'https://www.tcgplayer.com/login/revalidate?returnUrl=/myaccount/orderhistory');
+  for (const status of ['ok', 'partial', 'error']) {
+    assert.equal(describeSync({ status, count: 1, error: 'x' }).signInUrl, undefined, status);
+  }
 });

@@ -9,6 +9,8 @@
 import * as lists from './views/lists.js';
 import * as orders from './views/orders.js';
 import { viewFromHash, nextTabId } from '../lib/tabRouter.js';
+import { clearCachedLookups } from '../lib/cacheKeys.js';
+import { api } from '../lib/runtime.js';
 
 const VIEWS = { lists, orders };
 const IDS = Object.keys(VIEWS);
@@ -60,3 +62,20 @@ for (const tab of tabs) {
 
 window.addEventListener('hashchange', () => show(viewFromHash(location.hash, IDS, remembered())));
 show(viewFromHash(location.hash, IDS, remembered()));
+
+// Prices and trends are looked up from TCGplayer and kept for a while; this throws them away
+// so the next look is fresh. Saved lists and orders are never touched.
+const cacheStatus = document.getElementById('cacheStatus');
+let cacheTimer = null;
+document.getElementById('clearCache').addEventListener('click', async () => {
+  let message;
+  try {
+    const count = await clearCachedLookups(api.storage.local);
+    message = `Cleared ${count} cached lookup${count === 1 ? '' : 's'}.`;
+  } catch (err) {
+    message = `Could not clear the cache (${err && err.message ? err.message : err}).`;
+  }
+  cacheStatus.textContent = message;
+  clearTimeout(cacheTimer);
+  cacheTimer = setTimeout(() => { cacheStatus.textContent = ''; }, 2500);
+});

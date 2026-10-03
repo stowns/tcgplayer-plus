@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { SIGN_IN_URL } from './orderSync.js';
 import { formatMoney } from './money.js';
 import { imageCandidates, loadFirstWorking } from './productImage.js';
 import { totalChange } from './priceCompare.js';
@@ -250,7 +251,7 @@ export function updateResult(doc, container, orders, key, results) {
 
 /**
  * One sentence about how a read from TCGplayer went.
- * @returns {{text: string, isError: boolean}}
+ * @returns {{text: string, isError: boolean, signInUrl?: string}}  `signInUrl` is set when signing in would fix it
  */
 export function describeSync(result, { range = '' } = {}) {
   const orders = (n) => `${n} order${n === 1 ? '' : 's'}`;
@@ -265,7 +266,7 @@ export function describeSync(result, { range = '' } = {}) {
     case 'partial':
       return { text: `Read ${orders(result.count)}, then stopped (${result.error}). What was read is saved.`, isError: true };
     case 'signed-out':
-      return { text: 'You are not signed in to TCGplayer, so nothing new could be read.', isError: true };
+      return { text: 'You are not signed in to TCGplayer, new orders could not be read.', isError: true, signInUrl: SIGN_IN_URL };
     default:
       return { text: `Could not read your orders (${result.error || 'unknown error'}). Showing what is saved.`, isError: true };
   }

@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { isRetrying, retryText, retryTitle } from './retryState.js';
 import { formatMoney } from './money.js';
 import { parseItemRow, parseSummary, productIdFromThumbnail } from './orderParse.js';
 import { allocateShipping, landedNow, landedPaid } from './orderCost.js';
@@ -79,6 +80,13 @@ export function renderNow(doc, { paid, paidShipping = 0, result, detail = false,
   if (!result) {
     box.classList.add(`${NOW_CLASS}--loading`);
     line(`${NOW_CLASS}__label`, 'Checking price…');
+    return box;
+  }
+  if (isRetrying(result)) {
+    // Still loading: TCGplayer did not answer and the request is being tried again.
+    box.classList.add(`${NOW_CLASS}--loading`, `${NOW_CLASS}--retrying`);
+    box.title = retryTitle(result);
+    line(`${NOW_CLASS}__label`, retryText(result));
     return box;
   }
   if (result.status !== 'ok') {
@@ -160,7 +168,9 @@ export function renderTotal(doc, lines, { title = 'Value of items on this page v
   text(`${TOTAL_CLASS}__title`, title);
   if (!total) {
     box.classList.add(`${TOTAL_CLASS}--unknown`);
-    text(`${TOTAL_CLASS}__figure`, lines.some((l) => !l.result) ? 'Checking prices\u2026' : 'No prices available');
+    const waiting = lines.some((l) => !l.result || isRetrying(l.result));
+    const retrying = lines.some((l) => isRetrying(l.result));
+    text(`${TOTAL_CLASS}__figure`, retrying ? 'Checking prices\u2026 some are being retried' : waiting ? 'Checking prices\u2026' : 'No prices available');
     return box;
   }
 
@@ -168,7 +178,7 @@ export function renderTotal(doc, lines, { title = 'Value of items on this page v
   text(`${TOTAL_CLASS}__figure`, comparisonSummary(total));
   const parts = [`paid ${formatMoney(total.paid)}, ask ${formatMoney(total.now)}`, `${plural(total.counted, 'item')} counted`];
   if (total.missing) parts.push(`${total.missing} without a price`);
-  if (total.pending) parts.push(`${total.pending} still loading`);
+  if (total.pending) parts.push(`${total.pending} still loading${total.retrying ? ` (${total.retrying} being retried)` : ''}`);
   text(`${TOTAL_CLASS}__detail`, parts.join(' \u00B7 '));
   box.title = 'Price plus shipping on both sides (tax excluded); your share of each order\u2019s shipping is spread by item price. "Ask" is the cheapest live listing in the same '
     + 'condition, with its shipping: what it costs to buy, not what you could sell it for, and not TCGplayer\u2019s Market Price.';

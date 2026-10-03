@@ -214,13 +214,23 @@ test('items expose their key so updates can find them', () => {
   assert.equal(d.querySelector('.item').getAttribute('data-key'), '642621:english');
 });
 
+/** Draws each list into its own box inside one wrapper, as if both were on screen. */
+function bothLists(d, state, trends, asks) {
+  const root = d.createElement('div');
+  for (const list of state.lists) {
+    const box = d.createElement('div');
+    root.append(box);
+    renderLists(d, box, state, {}, trends, asks, { selectedId: list.id });
+  }
+  return root;
+}
+
 test('a card saved in two lists updates in both places', () => {
   const d = doc();
   const { state } = populated();
   const second = createList(state, 'Trades');
   const both = addItem(second.state, second.list.id, ITEM).state;
-  const container = d.getElementById('lists');
-  renderLists(d, container, both, {}, {});
+  const container = bothLists(d, both, {});
 
   assert.equal(updateTrend(container, '642621:english', DOWN), true);
   const cells = [...container.querySelectorAll('.item__trend .trend')];
@@ -320,19 +330,21 @@ function twoListsOfCards() {
 }
 
 test('each list with more than one card has its own sort control, set to that list\'s sort', () => {
-  const { state, w } = twoListsOfCards();
+  const { state, w, b } = twoListsOfCards();
   const d = doc();
-  renderLists(d, d.getElementById('lists'), state, {});
-  assert.equal(d.querySelectorAll('.list__sort-select').length, 2);
-  const sections = [...d.querySelectorAll('.list')];
-  assert.equal(sections[0].querySelector('.list__sort-select').value, 'added');
-  assert.equal(sections[0].querySelector('.list__sort-select').getAttribute('aria-label'), 'Sort Watching by');
-  assert.equal(sections[1].querySelector('.list__sort-select').getAttribute('aria-label'), 'Sort Buy by');
+  const show = (st, id) => renderLists(d, d.getElementById('lists'), st, {}, undefined, undefined, { selectedId: id });
+  show(state, w);
+  assert.equal(d.querySelectorAll('.list__sort-select').length, 1, 'only the list on show');
+  assert.equal(d.querySelector('.list__sort-select').value, 'added');
+  assert.equal(d.querySelector('.list__sort-select').getAttribute('aria-label'), 'Sort Watching by');
+  show(state, b);
+  assert.equal(d.querySelector('.list__sort-select').getAttribute('aria-label'), 'Sort Buy by');
   const sorted = setListSort(state, w, { key: 'ask', dir: 'asc' });
-  renderLists(d, d.getElementById('lists'), sorted, {});
-  assert.equal(d.querySelectorAll('.list')[0].querySelector('.list__sort-select').value, 'ask');
-  assert.equal(d.querySelectorAll('.list')[0].querySelector('.list__sort-direction').textContent, 'Lowest first');
-  assert.equal(d.querySelectorAll('.list')[1].querySelector('.list__sort-select').value, 'added');
+  show(sorted, w);
+  assert.equal(d.querySelector('.list__sort-select').value, 'ask');
+  assert.equal(d.querySelector('.list__sort-direction').textContent, 'Lowest first');
+  show(sorted, b);
+  assert.equal(d.querySelector('.list__sort-select').value, 'added');
 });
 
 test('a list with one card, or none, has no sort control', () => {
@@ -345,14 +357,18 @@ test('a list with one card, or none, has no sort control', () => {
 });
 
 test('items are ordered by their own list\'s sort: newest first by default, and only that list changes', () => {
-  const { state, w } = twoListsOfCards();
+  const { state, w, b } = twoListsOfCards();
   const d = doc();
-  renderLists(d, d.getElementById('lists'), state, {});
+  const show = (st, id) => renderLists(d, d.getElementById('lists'), st, {}, undefined, undefined, { selectedId: id });
+  show(state, w);
   assert.deepEqual(cardsIn(d, 0), ['Third', 'Second', 'First']);
-  assert.deepEqual(cardsIn(d, 1), ['Second', 'First']);
-  renderLists(d, d.getElementById('lists'), setListSort(state, w, { key: 'added', dir: 'asc' }), {});
+  show(state, b);
+  assert.deepEqual(cardsIn(d, 0), ['Second', 'First']);
+  const sorted = setListSort(state, w, { key: 'added', dir: 'asc' });
+  show(sorted, w);
   assert.deepEqual(cardsIn(d, 0), ['First', 'Second', 'Third']);
-  assert.deepEqual(cardsIn(d, 1), ['Second', 'First'], 'the other list is unchanged');
+  show(sorted, b);
+  assert.deepEqual(cardsIn(d, 0), ['Second', 'First'], 'the other list is unchanged');
 });
 
 test('sorting by ask uses the asks passed in, price plus shipping', () => {
@@ -369,15 +385,16 @@ test('the controls call the list\'s handlers with that list\'s id', () => {
   const { state, w, b } = twoListsOfCards();
   const calls = [];
   const d = doc();
-  renderLists(d, d.getElementById('lists'), state, {
+  const handlers = {
     onSortChange: (...args) => calls.push(['change', ...args]),
     onSortDirection: (...args) => calls.push(['direction', ...args]),
-  });
-  const [first, second] = [...d.querySelectorAll('.list')];
-  const select = second.querySelector('.list__sort-select');
+  };
+  renderLists(d, d.getElementById('lists'), state, handlers, undefined, undefined, { selectedId: b });
+  const select = d.querySelector('.list__sort-select');
   select.value = 'volatility';
   select.dispatchEvent(new d.defaultView.Event('change'));
-  first.querySelector('.list__sort-direction').click();
+  renderLists(d, d.getElementById('lists'), state, handlers, undefined, undefined, { selectedId: w });
+  d.querySelector('.list__sort-direction').click();
   assert.deepEqual(calls, [['change', b, 'volatility', 'desc'], ['direction', w]]);
 });
 
@@ -466,12 +483,208 @@ test('a card held in two lists updates in both', () => {
   const second = createList(state, 'Buy', { now: '2026-09-30T13:00:00.000Z' });
   state = addItem(second.state, second.list.id, ITEM, { now: '2026-09-30T13:01:00.000Z' }).state;
   const d = doc();
-  renderLists(d, d.getElementById('lists'), state, {}, {}, {});
-  assert.equal(updateAsk(d.getElementById('lists'), askKey(ITEM), okAsk(9.5, 0.99)), true);
-  assert.equal(d.querySelectorAll('.item__ask--ok').length, 2);
+  const container = bothLists(d, state, {}, {});
+  assert.equal(updateAsk(container, askKey(ITEM), okAsk(9.5, 0.99)), true);
+  assert.equal(container.querySelectorAll('.item__ask--ok').length, 2);
 });
 
 test('a different condition of the same card has its own ask', () => {
   const lp = { ...ITEM, priceAtSave: { ...ITEM.priceAtSave, condition: 'Lightly Played Holofoil' } };
   assert.notEqual(askKey(ITEM), askKey(lp));
+});
+
+// ---- choosing a list and paging through it -----------------------------------
+
+function manyCards(n, listName = 'Big') {
+  let { state, list } = createList(emptyState(), listName, { now: '2026-09-30T12:00:00.000Z' });
+  for (let i = 1; i <= n; i += 1) {
+    const stamp = `2026-09-30T12:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`;
+    state = addItem(state, list.id, { ...ITEM, productId: String(1000 + i), name: `Card ${i}`, language: 'English' }, { now: stamp }).state;
+  }
+  return { state, id: list.id };
+}
+const names = (d) => [...d.querySelectorAll('.item__name')].map((a) => a.textContent);
+const showView = (d, state, view, handlers = {}) => renderLists(d, d.getElementById('lists'), state, handlers, undefined, undefined, view);
+
+test('a dropdown names every list with its count, and only the chosen list is drawn', () => {
+  const { state, w, b } = twoListsOfCards();
+  const d = doc();
+  showView(d, state, { selectedId: b });
+  const options = [...d.querySelectorAll('.lists-toolbar__list option')];
+  assert.deepEqual(options.map((o) => o.textContent), ['Watching (3)', 'Buy (2)']);
+  assert.deepEqual(options.map((o) => o.value), [w, b]);
+  assert.equal(d.querySelector('.lists-toolbar__list').value, b);
+  assert.equal(d.querySelectorAll('.list').length, 1);
+  assert.equal(d.querySelector('.list__name').textContent, 'Buy');
+});
+
+test('the first list is shown when none is chosen or the chosen one is gone', () => {
+  const { state } = twoListsOfCards();
+  for (const selectedId of [undefined, 'gone']) {
+    const d = doc();
+    showView(d, state, { selectedId });
+    assert.equal(d.querySelector('.list__name').textContent, 'Watching');
+  }
+});
+
+test('list names go in as text, not markup', () => {
+  const d = doc();
+  const nasty = createList(emptyState(), '<img src=x onerror=alert(1)>').state;
+  showView(d, nasty, {});
+  assert.equal(d.querySelector('.lists-toolbar img'), null);
+  assert.match(d.querySelector('.lists-toolbar__list option').textContent, /<img src=x/);
+});
+
+test('choosing a list asks for it by id', () => {
+  const { state, b } = twoListsOfCards();
+  const d = doc();
+  const chosen = [];
+  showView(d, state, {}, { onSelectList: (id) => chosen.push(id) });
+  const select = d.querySelector('.lists-toolbar__list');
+  select.value = b;
+  select.dispatchEvent(new d.defaultView.Event('change'));
+  assert.deepEqual(chosen, [b]);
+});
+
+test('the page size offers 25, 50, 75 and All, showing the one in use', () => {
+  const { state } = twoListsOfCards();
+  const d = doc();
+  showView(d, state, { size: 50 });
+  const options = [...d.querySelectorAll('.lists-toolbar__size option')];
+  assert.deepEqual(options.map((o) => o.textContent), ['25', '50', '75', 'All']);
+  assert.equal(d.querySelector('.lists-toolbar__size').value, '50');
+  showView(d, state, {});
+  assert.equal(d.querySelector('.lists-toolbar__size').value, '25', 'default');
+});
+
+test('choosing a page size passes it on as a number, or "all"', () => {
+  const { state } = twoListsOfCards();
+  const d = doc();
+  const sizes = [];
+  showView(d, state, {}, { onPageSize: (n) => sizes.push(n) });
+  const select = d.querySelector('.lists-toolbar__size');
+  for (const value of ['75', 'all']) {
+    select.value = value;
+    select.dispatchEvent(new d.defaultView.Event('change'));
+  }
+  assert.deepEqual(sizes, [75, 'all']);
+});
+
+test('a long list shows one page, newest first, with "Showing x–y of n" above and below', () => {
+  const { state } = manyCards(60);
+  const d = doc();
+  showView(d, state, { size: 25, page: 1 });
+  assert.equal(names(d).length, 25);
+  assert.equal(names(d)[0], 'Card 60');
+  assert.equal(names(d).at(-1), 'Card 36');
+  const ranges = [...d.querySelectorAll('.pager__range')].map((r) => r.textContent);
+  assert.deepEqual(ranges, ['Showing 1–25 of 60', 'Showing 1–25 of 60']);
+  assert.equal(d.querySelector('.list__count').textContent, '60 items', 'the header still counts every card');
+});
+
+test('later pages continue the same order, and the last one is partial', () => {
+  const { state } = manyCards(60);
+  const d = doc();
+  showView(d, state, { size: 25, page: 3 });
+  assert.equal(names(d).length, 10);
+  assert.equal(names(d)[0], 'Card 10');
+  assert.equal(d.querySelector('.pager__range').textContent, 'Showing 51–60 of 60');
+});
+
+test('paging follows the list\'s sort, not the order the cards were saved in', () => {
+  const { state, id } = manyCards(60);
+  const asc = setListSort(state, id, { key: 'added', dir: 'asc' });
+  const d = doc();
+  showView(d, asc, { size: 25, page: 1 });
+  assert.equal(names(d)[0], 'Card 1');
+  showView(d, asc, { size: 25, page: 2 });
+  assert.equal(names(d)[0], 'Card 26');
+});
+
+test('Previous and Next are disabled at the ends and ask for the neighbouring page', () => {
+  const { state } = manyCards(60);
+  const d = doc();
+  const pages = [];
+  const handlers = { onPage: (n) => pages.push(n) };
+  showView(d, state, { size: 25, page: 1 }, handlers);
+  assert.equal(d.querySelector('.pager__prev').disabled, true);
+  assert.equal(d.querySelector('.pager__next').disabled, false);
+  d.querySelector('.pager__next').click();
+  showView(d, state, { size: 25, page: 2 }, handlers);
+  d.querySelectorAll('.pager__prev')[1].click();
+  showView(d, state, { size: 25, page: 3 }, handlers);
+  assert.equal(d.querySelector('.pager__next').disabled, true);
+  assert.deepEqual(pages, [2, 1]);
+});
+
+test('no pager when everything fits on one page, or when All is chosen', () => {
+  const { state } = manyCards(60);
+  const d = doc();
+  showView(d, state, { size: 'all' });
+  assert.equal(names(d).length, 60);
+  assert.ok([...d.querySelectorAll('.pager')].every((p) => p.hidden));
+  showView(d, manyCards(10).state, { size: 25 });
+  assert.ok([...d.querySelectorAll('.pager')].every((p) => p.hidden));
+});
+
+test('a page number past the end shows the last page', () => {
+  const { state } = manyCards(60);
+  const d = doc();
+  showView(d, state, { size: 25, page: 9 });
+  assert.equal(d.querySelector('.pager__range').textContent, 'Showing 51–60 of 60');
+});
+
+// ---- while a lookup is being retried ------------------------------------------
+
+const RETRYING = { retrying: true, retry: 1, retries: 4 };
+
+test('a trend being retried reads as loading and says it is retrying', () => {
+  assert.equal(trendSummary(RETRYING), 'Retrying (1 of 4)\u2026');
+  assert.match(trendTooltip(RETRYING), /TCGplayer did not answer/);
+  const box = renderTrend(doc(), RETRYING);
+  assert.match(box.className, /trend--loading/);
+  assert.equal(box.getAttribute('data-retrying'), '1');
+  assert.equal(box.querySelector('.trend__summary').textContent, 'Retrying (1 of 4)\u2026');
+  assert.equal(box.querySelector('.trend__label'), null, 'nothing is claimed about the trend');
+  assert.equal(box.querySelector('.trend__stat'), null);
+});
+
+test('a trend that is merely loading is not marked as retrying', () => {
+  const box = renderTrend(doc(), null);
+  assert.equal(box.getAttribute('data-retrying'), null);
+  assert.equal(box.querySelector('.trend__summary').textContent, 'Checking trend\u2026');
+});
+
+test('an ask being retried reads as loading and says it is retrying', () => {
+  assert.equal(askSummary(RETRYING), 'Retrying (1 of 4)\u2026');
+  const node = renderAsk(doc(), RETRYING);
+  assert.match(node.className, /item__ask--loading/);
+  assert.equal(node.getAttribute('data-retrying'), '1');
+  assert.match(node.getAttribute('title'), /Trying again automatically/);
+  assert.equal(renderAsk(doc(), null).getAttribute('data-retrying'), null);
+});
+
+test('a retrying state can be swapped in place, and replaced by the real answer', () => {
+  const d = doc();
+  const { state } = populated();
+  const container = d.getElementById('lists');
+  renderLists(d, container, state, {}, {}, {});
+  assert.equal(updateTrend(container, '642621:english', RETRYING), true);
+  assert.equal(container.querySelector('.item__trend .trend__summary').textContent, 'Retrying (1 of 4)\u2026');
+  assert.equal(updateTrend(container, '642621:english', DOWN), true);
+  assert.match(container.querySelector('.item__trend .trend').className, /trend--down/);
+  assert.equal(container.querySelector('.item__trend [data-retrying]'), null);
+  assert.equal(updateAsk(container, askKey(ITEM), RETRYING), true);
+  assert.equal(container.querySelector('.item__ask').textContent, 'Retrying (1 of 4)\u2026');
+});
+
+test('sorting by volatility or ask does not break on a card still being retried', () => {
+  const { state, w } = twoListsOfCards();
+  const d = doc();
+  const asks = { [askKey({ productId: '1', priceAtSave: { condition: 'Near Mint Holofoil' } })]: RETRYING };
+  const trends = { '1:english': RETRYING };
+  for (const key of ['ask', 'volatility']) {
+    renderLists(d, d.getElementById('lists'), setListSort(state, w, { key, dir: 'desc' }), {}, trends, asks, { selectedId: w });
+    assert.equal(d.querySelectorAll('.item').length, 3);
+  }
 });

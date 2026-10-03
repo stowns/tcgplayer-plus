@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { isRetrying } from './retryState.js';
+
 /** Under a cent, or under a percent of the price paid, is not worth an arrow. */
 export const SAME_BAND = 0.01;
 
@@ -30,7 +32,7 @@ export function comparePrice(paid, current) {
  *
  * @param {{paid: number|null, quantity?: number, result: {status: string, price?: number}|null}[]} lines
  * @returns {{direction: string, diff: number, pct: number, paid: number, now: number,
- *   counted: number, missing: number, pending: number}|null} null when nothing could be priced
+ *   counted: number, missing: number, pending: number, retrying: number}|null} null when nothing could be priced
  */
 export function totalChange(lines) {
   let paid = 0;
@@ -38,8 +40,11 @@ export function totalChange(lines) {
   let counted = 0;
   let missing = 0;
   let pending = 0;
+  let retrying = 0;
   for (const { paid: each, quantity = 1, result } of lines) {
     if (!result) { pending += 1; continue; }
+    // Being retried is still waiting for an answer, not an answer of "no price".
+    if (isRetrying(result)) { pending += 1; retrying += 1; continue; }
     if (result.status !== 'ok' || !Number.isFinite(each) || each <= 0) { missing += 1; continue; }
     const units = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
     paid += each * units;
@@ -48,5 +53,5 @@ export function totalChange(lines) {
   }
   if (counted === 0) return null;
   const comparison = comparePrice(paid, now);
-  return { ...comparison, paid: Math.round(paid * 100) / 100, now: Math.round(now * 100) / 100, counted, missing, pending };
+  return { ...comparison, paid: Math.round(paid * 100) / 100, now: Math.round(now * 100) / 100, counted, missing, pending, retrying };
 }

@@ -32,6 +32,7 @@
 .trend__stat { color: var(--ink-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
 .trend .sparkline { display: block; margin-top: 4px; }
 .trend--loading .trend__summary { font-weight: 400; }
+.trend[data-retrying="1"] .trend__summary, .item__ask[data-retrying="1"] { color: var(--warn); }
 .trend--unknown .trend__summary { font-size: 12px; font-weight: 400; white-space: normal; }
 
 /* Rising is green, falling is red, as on the order pages. The sparkline follows the colour. */
@@ -44,3 +45,13 @@
   .trend { align-items: flex-start; }
   .trend__note { text-align: left; }
 }
+
+.lists-toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; }
+.lists-toolbar__field { align-items: center; color: var(--ink-soft); display: inline-flex; font-size: 13px; gap: 6px; }
+.lists-toolbar select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 14px; max-width: 28ch; padding: 4px 8px; }
+.lists-toolbar select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pager { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.pager[hidden] { display: none; }
+.pager__range { color: var(--ink-soft); font-size: 13px; margin-right: auto; }
+.pager button { font-size: 13px; padding: 3px 12px; }
+.pager button:disabled { cursor: default; opacity: 0.45; }

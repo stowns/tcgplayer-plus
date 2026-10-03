@@ -58,10 +58,18 @@ for (const target of TARGETS) {
   test(`every file the ${target} manifest points at is built`, async () => {
     const m = manifests[target];
     const files = [
-      m.background.scripts || m.background.service_worker, m.action.default_popup,
+      m.background.scripts || m.background.service_worker,
       m.content_scripts.flatMap((c) => [...c.js, ...(c.css || [])]),
       Object.values(m.icons), Object.values(m.action.default_icon),
     ].flat();
     for (const f of files) await access(`dist/${target}/${f}`);
   });
 }
+
+test('the toolbar button has no popup, so a click reaches the background', () => {
+  for (const m of Object.values(manifests)) {
+    assert.equal(m.action.default_popup, undefined);
+    assert.equal(m.action.default_title, 'TCGPlayer+');
+    assert.ok(m.action.default_icon, 'it still has its icon');
+  }
+});

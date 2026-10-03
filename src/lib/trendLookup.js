@@ -6,13 +6,14 @@
  */
 
 import { historyUrl, parseHistory, splitConditionVariant } from './tcgplayerHistory.js';
-import { computeTrend } from './priceTrend.js';
+import { computeTrend, TREND } from './priceTrend.js';
 
 /**
- * Six hours. Buckets are daily, so an answer this old is still the same story,
- * and a lists page re-opened during the day should not hit TCGplayer again.
+ * One hour. TCGplayer's own response is cacheable for an hour (`max-age=3600`), so
+ * asking again sooner would only get the same answer back. The newest day is
+ * still filling up, which is why it is not longer.
  */
-export const TREND_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+export const TREND_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const UNAVAILABLE = {
   direction: 'unknown', pct: null, windowDays: null, recent: null, prior: null,
@@ -34,7 +35,7 @@ export async function lookupTrend(item, deps) {
 
   const key = trendCacheKey(item);
   const cached = deps.cache ? await deps.cache.get(key) : null;
-  if (cached) return cached;
+  if (cached && cached.rules === TREND.VERSION) return cached;
 
   let history;
   try {
@@ -46,6 +47,7 @@ export async function lookupTrend(item, deps) {
 
   const result = {
     ...computeTrend(history.days),
+    rules: TREND.VERSION,
     sku: { skuId: history.skuId, condition: history.condition, variant: history.variant },
   };
   // Only real answers are cached; an outage should be retried, not remembered.

@@ -47,16 +47,17 @@ function storageArea(initial = {}) {
   };
 }
 
-async function startBackground({ failFeeds = false } = {}) {
+async function startBackground({ failFeeds = false, failFirst = 0, random = 0 } = {}) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
   const requested = [];
   const bus = messageBus();
+  window.Math.random = () => random; // 0: retries wait no time at all
   window.fetch = async (url) => {
     // The lists page also asks for each card's ask; these tests are about the history feed.
     if (/\/listings$/.test(url)) return { ok: true, status: 200, json: async () => ({ results: [{ totalResults: 0, results: [] }] }) };
     requested.push(url);
-    if (failFeeds) return { ok: false, status: 503, json: async () => ({}) };
+    if (failFeeds || requested.length <= failFirst) return { ok: false, status: 503, json: async () => ({}) };
     const id = url.match(/history\/(\d+)\//)[1];
     return { ok: true, status: 200, json: async () => FEEDS[id] };
   };
@@ -64,10 +65,11 @@ async function startBackground({ failFeeds = false } = {}) {
   window[apiName()] = {
     storage: { local },
     runtime: bus.runtime,
-    tabs: { create: async () => ({}) },
+    action: bus.action,
+    tabs: { create: async () => ({}), sendMessage: bus.tabs.sendMessage },
   };
   window.eval(await readFile(dist('background.js'), 'utf8'));
-  return { requested, local, send: bus.send };
+  return { requested, local, send: bus.send, pageRuntime: bus.pageRuntime };
 }
 
 async function startListsPage(background) {
@@ -94,7 +96,7 @@ async function startListsPage(background) {
       local: storageArea({ lists: LISTS }),
       onChanged: { addListener: () => {}, removeListener: () => {} },
     },
-    runtime: { sendMessage: (m) => background.send(m) },
+    runtime: background.pageRuntime(),
   };
   window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
@@ -166,11 +168,14 @@ test('when TCGplayer is down the row says so, and the page keeps working', async
   const bg = await startBackground({ failFeeds: true });
   const page = await startListsPage(bg);
   await page.reveal(0);
+  const start = Date.now();
+  while (/trend--(loading|retrying)/.test(trendOf(page.document, 'Pikachu ex').className) && Date.now() - start < 8000) await settle(50);
   const trend = trendOf(page.document, 'Pikachu ex');
   assert.match(trend.className, /trend--unknown/);
   assert.match(trend.textContent, /Trend unavailable/);
   assert.equal(page.document.querySelectorAll('.item').length, 2, 'the list itself is untouched');
   assert.equal(Object.keys(bg.local.data).filter((k) => k.startsWith('tr:')).length, 0, 'an outage is not cached');
+  assert.equal(bg.requested.length, 5, 'it was tried, then retried four times, before giving up');
 });
 
 test('a request with no product id is answered, not thrown', async () => {
@@ -178,6 +183,50 @@ test('a request with no product id is answered, not thrown', async () => {
   const r = await bg.send({ type: 'price-trend', item: {} });
   assert.equal(r.direction, 'unknown');
   assert.equal(bg.requested.length, 0);
+});
+
+
+// ---- retrying ------------------------------------------------------------------
+
+const waitFor = async (check, limit = 8000) => {
+  const start = Date.now();
+  while (!check() && Date.now() - start < limit) await settle(20);
+  return check();
+};
+
+test('while TCGplayer is not answering, the card says it is retrying, then shows the trend when it does', async () => {
+  const bg = await startBackground({ failFirst: 1, random: 0.999 }); // the first retry waits about half a second
+  const page = await startListsPage(bg);
+  await page.reveal(0);
+  const row = () => [...page.document.querySelectorAll('.item')].find((r) => r.textContent.includes('Pikachu ex'));
+
+  assert.ok(await waitFor(() => row().querySelector('.trend[data-retrying="1"]')), 'the card says it is retrying');
+  assert.equal(row().querySelector('.trend__summary').textContent, 'Retrying (1 of 4)\u2026');
+  assert.match(row().querySelector('.trend').className, /trend--loading/);
+
+  assert.ok(await waitFor(() => !row().querySelector('.trend[data-retrying="1"]') && !/trend--loading/.test(row().querySelector('.trend').className)));
+  assert.match(row().querySelector('.trend').className, /trend--(up|down|flat)/, 'the real trend replaced it');
+  assert.equal(bg.requested.length >= 2, true, 'it did ask again');
+});
+
+test('two requests for the same trend share one lookup, and both are answered after the retry', async () => {
+  const bg = await startBackground({ failFirst: 1, random: 0.999 });
+  const asking = Promise.all([
+    bg.send({ type: 'price-trend', ref: 'a', item: { productId: '712953', language: 'English', condition: 'Near Mint Holofoil' } }),
+    bg.send({ type: 'price-trend', ref: 'b', item: { productId: '712953', language: 'English', condition: 'Near Mint Holofoil' } }),
+  ]);
+  const [a, b] = await asking;
+  assert.equal(a.direction, b.direction);
+  assert.equal(bg.requested.length, 2, 'one lookup, retried once, shared');
+});
+
+test('a trend that fails every time ends as unavailable, after being shown as retrying', async () => {
+  const bg = await startBackground({ failFeeds: true });
+  const page = await startListsPage(bg);
+  await page.reveal(0);
+  const row = () => [...page.document.querySelectorAll('.item')].find((r) => r.textContent.includes('Pikachu ex'));
+  assert.ok(await waitFor(() => /Trend unavailable/.test(row().querySelector('.trend').textContent)));
+  assert.equal(row().querySelector('.trend[data-retrying]'), null, 'no longer claims to be retrying');
 });
 
 });

@@ -28,24 +28,28 @@ function storageArea() {
 // Lapras has listings; Meowth has none; everything else is down.
 const feeds = { 696683: LAPRAS_LISTINGS, 714358: NO_LISTINGS };
 
-async function startBackground() {
+async function startBackground({ failFirst = 0, random = 0 } = {}) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
   const requests = [];
   const bus = messageBus();
+  window.Math.random = () => random;
+  let failed = 0;
   window.fetch = async (url, init) => {
     requests.push({ url, init });
+    if (failed < failFirst) { failed += 1; return { ok: false, status: 503, json: async () => ({}) }; }
     const id = url.match(/product\/(\d+)\/listings/)[1];
-    if (!feeds[id]) return { ok: false, status: 503, json: async () => ({}) };
+    if (!feeds[id]) return { ok: false, status: 404, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => feeds[id] };
   };
   window[apiName()] = {
     storage: { local: storageArea() },
     runtime: bus.runtime,
-    tabs: { create: async () => ({}) },
+    action: bus.action,
+    tabs: { create: async () => ({}), sendMessage: bus.tabs.sendMessage },
   };
   window.eval(await readFile(dist('background.js'), 'utf8'));
-  return { requests, send: bus.send };
+  return { requests, send: bus.send, pageRuntime: bus.pageRuntime };
 }
 
 /** Lookups run through a throttle, so wait for the page to finish rather than guess a delay. */
@@ -62,7 +66,7 @@ async function openOrders(background, html = ORDER_PAGE, url = ORDER_URL) {
   });
   const { window } = dom;
   const sent = [];
-  window[apiName()] = { runtime: { sendMessage: (m) => { sent.push(m); return background.send(m); } } };
+  window[apiName()] = { runtime: background.pageRuntime((m) => sent.push(m), { contentScript: true }) };
   window.eval(await readFile(dist('content/tcgplayerOrders.js'), 'utf8'));
   await untilPricesArrive(window.document);
   return { window, document: window.document, sent };
@@ -175,6 +179,31 @@ test('the page settles: drawing the total does not trigger more drawing', async 
   new window.MutationObserver((records) => { changes += records.length; }).observe(document.documentElement, { childList: true, subtree: true });
   await settle(400);
   assert.equal(changes, 0, 'no further page changes once every price is in');
+});
+
+
+// ---- retrying ------------------------------------------------------------------
+
+test('a price TCGplayer is slow to give says it is retrying, then shows the price, and the total waits for it', async () => {
+  const bg = await startBackground({ failFirst: 1, random: 0.999 });
+  const dom = new JSDOM(ORDER_PAGE, { url: ORDER_URL, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole() });
+  const { window } = dom;
+  window[apiName()] = { runtime: bg.pageRuntime(undefined, { contentScript: true }) };
+  window.eval(await readFile(dist('content/tcgplayerOrders.js'), 'utf8'));
+  const d = window.document;
+
+  const start = Date.now();
+  while (!d.querySelector('.ptcg-now--retrying') && Date.now() - start < 4000) await settle(20);
+  const box = d.querySelector('.ptcg-now--retrying');
+  assert.ok(box, 'a row says it is retrying');
+  assert.equal(box.querySelector('.ptcg-now__label').textContent, 'Retrying (1 of 4)\u2026');
+  assert.match(d.querySelector('.ptcg-total').textContent, /Checking prices/);
+
+  await untilPricesArrive(d);
+  assert.equal(d.querySelector('.ptcg-now--retrying'), null);
+  assert.equal(d.querySelector('.ptcg-now--loading'), null);
+  assert.ok(d.querySelector('.ptcg-now__price'), 'a real price replaced it');
+  assert.doesNotMatch(d.querySelector('.ptcg-total').textContent, /being retried|still loading/);
 });
 
 });

@@ -9,10 +9,17 @@ import { loadLists, saveLists } from '../../lib/listsStorage.js';
 import {
   createList, renameList, deleteList, removeItem, setListSort, listSort,
 } from '../../lib/lists.js';
+import { pageOf, parsePageSize, resolveSelection } from '../../lib/listsPage.js';
 import { needsHistory, needsAsk, defaultDirection, askKey } from '../../lib/listsSort.js';
 import { api } from '../../lib/runtime.js';
+import { retryingState, isSettled } from '../../lib/retryState.js';
 
 const storage = api.storage.local;
+
+const SELECTED_KEY = 'ptcg.listsSelected';
+const SIZE_KEY = 'ptcg.listsPageSize';
+const recall = (key) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+const keep = (key, value) => { try { localStorage.setItem(key, String(value)); } catch { /* not worth failing over */ } };
 
 function make(tag, props = {}, text) {
   const node = document.createElement(tag);
@@ -46,6 +53,17 @@ export function mount(root) {
     status.setAttribute('data-error', isError ? '1' : '0');
   }
 
+  // Which list is showing, and which page of it. Both are per-viewer conveniences.
+  let selectedId = recall(SELECTED_KEY);
+  let size = parsePageSize(recall(SIZE_KEY));
+  let page = 1;
+
+  function select(id) {
+    selectedId = id;
+    page = 1;
+    keep(SELECTED_KEY, id);
+  }
+
   async function mutate(change) {
     try {
       const next = change(await loadLists(storage));
@@ -60,6 +78,14 @@ export function mount(root) {
   const handlers = {
     onRemoveItem: (listId, key) => mutate((state) => removeItem(state, listId, key)),
 
+    onSelectList: (listId) => { select(listId); draw(); },
+    onPageSize: (next) => { size = next; page = 1; keep(SIZE_KEY, next); draw(); },
+    onPage: (next) => {
+      page = next;
+      draw();
+      if (container.scrollIntoView) container.scrollIntoView({ block: 'start' });
+    },
+
     onRenameList: (listId) => mutate((state) => {
       const list = state.lists.find((l) => l.id === listId);
       const name = window.prompt('Rename list', list ? list.name : '');
@@ -67,12 +93,16 @@ export function mount(root) {
     }),
 
     // Each list keeps its own order, saved with the list.
-    onSortChange: (listId, key) => mutate((state) => setListSort(state, listId, { key, dir: defaultDirection(key) })),
+    onSortChange: (listId, key) => mutate((state) => {
+      page = 1;
+      return setListSort(state, listId, { key, dir: defaultDirection(key) });
+    }),
 
     onSortDirection: (listId) => mutate((state) => {
       const list = state.lists.find((l) => l.id === listId);
       if (!list) return null;
       const now = listSort(list);
+      page = 1;
       return setListSort(state, listId, { key: now.key, dir: now.dir === 'asc' ? 'desc' : 'asc' });
     }),
 
@@ -83,7 +113,9 @@ export function mount(root) {
       const warning = count
         ? `Delete "${list.name}" and the ${count} item${count === 1 ? '' : 's'} in it?`
         : `Delete "${list.name}"?`;
-      return window.confirm(warning) ? deleteList(state, listId) : null;
+      if (!window.confirm(warning)) return null;
+      if (listId === selectedId) { selectedId = ''; page = 1; }
+      return deleteList(state, listId);
     }),
   };
 
@@ -106,6 +138,7 @@ export function mount(root) {
       try {
         result = await api.runtime.sendMessage({
           type: 'price-trend',
+          ref: key,
           item: {
             productId: item.productId,
             language: item.language,
@@ -133,6 +166,7 @@ export function mount(root) {
       try {
         result = await api.runtime.sendMessage({
           type: 'listing-price',
+          ref: key,
           item: { productId: item.productId, condition: item.priceAtSave ? item.priceAtSave.condition : '' },
         });
       } catch {
@@ -145,18 +179,40 @@ export function mount(root) {
     return request;
   }
 
+  // While TCGplayer is not answering, the background retries the lookup and tells us, so the
+  // card says it is still loading and why, instead of looking stuck.
+  let sortLoading = 0;
+  const onRetryNotice = (message) => {
+    if (!mounted || !message || message.type !== 'lookup-retry') return;
+    // Only for what this page asked about: the notice reaches every dashboard tab that is open.
+    if (message.kind === 'price-trend' && inflight.has(message.ref) && !isSettled(trends[message.ref])) {
+      trends[message.ref] = retryingState(message);
+      updateTrend(container, message.ref, trends[message.ref]);
+    } else if (message.kind === 'listing-price' && askInflight.has(message.ref) && !isSettled(asks[message.ref])) {
+      asks[message.ref] = retryingState(message);
+      updateAsk(container, message.ref, asks[message.ref]);
+    } else {
+      return;
+    }
+    if (sortLoading) say(`Loading prices for ${sortLoading} card${sortLoading === 1 ? '' : 's'}\u2026 TCGplayer is slow to answer, so some are being retried.`);
+  };
+  api.runtime.onMessage.addListener(onRetryNotice);
+
   // Sorting a list by volatility or ask needs that for every one of its cards,
-  // not just the ones on screen.
+  // not just the ones on the page; only the list on show is loaded.
   let sortRun = 0;
   async function loadEverythingForSort(state) {
-    const need = (test) => state.lists.filter((list) => test(listSort(list).key)).flatMap((list) => list.items);
-    const missingTrends = [...new Set(need(needsHistory).map((i) => i.key))].filter((key) => !trends[key]);
-    const missingAsks = [...new Set(need(needsAsk).map(askKey))].filter((key) => !asks[key]);
+    const shown = resolveSelection(state.lists, selectedId);
+    const need = (test) => (shown && test(listSort(shown).key) ? shown.items : []);
+    const missingTrends = [...new Set(need(needsHistory).map((i) => i.key))].filter((key) => !isSettled(trends[key]));
+    const missingAsks = [...new Set(need(needsAsk).map(askKey))].filter((key) => !isSettled(asks[key]));
     const total = missingTrends.length + missingAsks.length;
     if (!total) return;
     const run = ++sortRun;
     say(`Loading prices for ${total} card${total === 1 ? '' : 's'}\u2026`);
+    sortLoading = total;
     await Promise.all([...missingTrends.map(requestTrend), ...missingAsks.map(requestAsk)]);
+    if (run === sortRun) sortLoading = 0;
     if (!mounted || run !== sortRun) return;
     say('');
     await draw();
@@ -178,16 +234,22 @@ export function mount(root) {
     itemsByKey = new Map(everything.map((i) => [i.key, i]));
     itemsByAskKey = new Map(everything.map((i) => [askKey(i), i]));
     observer.disconnect();
-    renderLists(document, container, state, handlers, trends, asks);
+    // Removing cards can leave the page past the end; step back to the last real one.
+    const shown = resolveSelection(state.lists, selectedId);
+    if (shown) page = pageOf(shown.items, { page, size }).page;
+    renderLists(document, container, state, handlers, trends, asks, { selectedId, size, page });
     for (const row of container.querySelectorAll('.item')) {
-      if (!trends[row.getAttribute('data-key')] || !asks[row.getAttribute('data-ask-key')]) observer.observe(row);
+      if (!isSettled(trends[row.getAttribute('data-key')]) || !isSettled(asks[row.getAttribute('data-ask-key')])) observer.observe(row);
     }
     loadEverythingForSort(state);
   }
 
   newList.addEventListener('click', () => mutate((state) => {
     const name = window.prompt('Name the new list');
-    return name === null ? null : createList(state, name).state;
+    if (name === null) return null;
+    const created = createList(state, name);
+    select(created.list.id);
+    return created.state;
   }));
 
   exportButton.addEventListener('click', async () => {
@@ -218,5 +280,6 @@ export function mount(root) {
     mounted = false;
     observer.disconnect();
     api.storage.onChanged.removeListener(onChanged);
+    api.runtime.onMessage.removeListener(onRetryNotice);
   };
 }

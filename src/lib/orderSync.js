@@ -13,6 +13,8 @@ import { parseOrders, parsePager, parseFilterForm, looksSignedOut } from './orde
 
 export const ORDER_HISTORY_URL = 'https://store.tcgplayer.com/myaccount/orderhistory';
 const FILTER_POST_URL = 'https://store.tcgplayer.com/MyAccount/OrderHistory';
+/** Where to sign in; TCGplayer sends you on to your order history afterwards. */
+export const SIGN_IN_URL = 'https://www.tcgplayer.com/login/revalidate?returnUrl=/myaccount/orderhistory';
 /** A safety stop, not a limit anyone should meet: 10 orders a page. */
 export const MAX_PAGES = 60;
 

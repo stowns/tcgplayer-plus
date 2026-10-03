@@ -6,3 +6,5 @@ dist/
 deal-report.html
 deal-report.json
 examples/
+release/
+.DS_Store

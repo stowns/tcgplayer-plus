@@ -53,11 +53,22 @@ function storageArea(initial = {}) {
 }
 
 /** A tiny TCGplayer. `orders` are the pages of markup it serves; the range is session state. */
-function fakeTcgplayer({ pages = [ORDERS.slice(0, 3), ORDERS.slice(3)], loggedIn = true, range = 'Last 30 Days' } = {}) {
-  const site = { range, requests: [], posts: [], pages, loggedIn };
+function fakeTcgplayer({
+  pages = [ORDERS.slice(0, 3), ORDERS.slice(3)], loggedIn = true, range = 'Last 30 Days', random = 0, failListings = 0, failOrderPages = 0,
+} = {}) {
+  // `random` is what retry jitter draws (0: no wait); `failListings` / `failOrderPages` answer 503 that many times first.
+  const site = { range, requests: [], posts: [], pages, loggedIn, random, failListings, failOrderPages };
   site.fetch = async (url, init = {}) => {
     site.requests.push({ url, method: init.method || 'GET' });
     const reply = (text, extra = {}) => ({ ok: true, status: 200, url, text: async () => text, json: async () => JSON.parse(text), ...extra });
+    if (/mp-search-api\.tcgplayer\.com\/v1\/product\/(\d+)\/listings/.test(url) && site.failListings > 0) {
+      site.failListings -= 1;
+      return { ok: false, status: 503, url, text: async () => '', json: async () => ({}) };
+    }
+    if (/store\.tcgplayer\.com\/myaccount\/orderhistory/i.test(url) && init.method !== 'POST' && site.failOrderPages > 0) {
+      site.failOrderPages -= 1;
+      return { ok: false, status: 503, url, text: async () => '', json: async () => ({}) };
+    }
     if (/mp-search-api\.tcgplayer\.com\/v1\/product\/(\d+)\/listings/.test(url)) {
       const id = /product\/(\d+)\//.exec(url)[1];
       return reply(JSON.stringify(id === '696683' ? LAPRAS_LISTINGS : NO_LISTINGS));
@@ -80,16 +91,18 @@ function fakeTcgplayer({ pages = [ORDERS.slice(0, 3), ORDERS.slice(3)], loggedIn
 async function startBackground(site, local = storageArea()) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
-  freezeClock(window);
   const bus = messageBus();
+  const created = [];
   window.fetch = site.fetch;
+  window.Math.random = () => site.random;
   window[apiName()] = {
     storage: { local },
     runtime: bus.runtime,
-    tabs: { create: async () => ({}) },
+    action: bus.action,
+    tabs: { create: async (options) => { created.push(options.url); return {}; }, sendMessage: bus.tabs.sendMessage },
   };
   window.eval(await readFile(dist('background.js'), 'utf8'));
-  return { local, site, send: bus.send };
+  return { local, site, created, click: bus.click, send: bus.send, pageRuntime: bus.pageRuntime, notify: bus.runtime.sendMessage };
 }
 
 async function openHome(background, hash = '#orders') {
@@ -100,6 +113,7 @@ async function openHome(background, hash = '#orders') {
   const { window } = dom;
   freezeClock(window);
   window.fetch = background.site.fetch; // the page reads the order pages itself
+  window.Math.random = () => background.site.random;
   window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
   const sent = [];
   window[apiName()] = {
@@ -107,7 +121,7 @@ async function openHome(background, hash = '#orders') {
       addListener: (fn) => background.local.listeners.push(fn),
       removeListener: (fn) => { const i = background.local.listeners.indexOf(fn); if (i >= 0) background.local.listeners.splice(i, 1); },
     } },
-    runtime: { sendMessage: (m) => { sent.push(m); return background.send(m); } },
+    runtime: background.pageRuntime((m) => sent.push(m)),
   };
   window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
@@ -300,6 +314,11 @@ test('signed out: says so, offers the TCGplayer page, and keeps working from the
   await until(() => /not signed in/.test(page.document.querySelector('.orders-status').textContent));
   assert.match(page.document.querySelector('.notice').textContent, /Sign in to TCGplayer/);
   assert.equal(page.document.querySelector('.orders-status').getAttribute('data-error'), '1');
+  const signIn = page.document.querySelector('.orders-status a.sign-in');
+  assert.equal(signIn.textContent, 'Sign in');
+  assert.equal(signIn.href, 'https://www.tcgplayer.com/login/revalidate?returnUrl=/myaccount/orderhistory');
+  assert.equal(signIn.target, '_blank');
+  assert.match(signIn.rel, /noopener/);
   assert.equal(page.document.querySelector('.orders-bar button').disabled, false, 'can retry');
 });
 
@@ -352,7 +371,7 @@ test('visiting TCGplayer\'s own Order History saves what it shows, and the open 
   const dom = new JSDOM(html, {
     url: 'https://store.tcgplayer.com/myaccount/orderhistory', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole(),
   });
-  dom.window[apiName()] = { storage: { local: bg.local }, runtime: { sendMessage: (m) => bg.send(m) } };
+  dom.window[apiName()] = { storage: { local: bg.local }, runtime: bg.pageRuntime(undefined, { contentScript: true }) };
   dom.window.eval(await readFile(dist('content/tcgplayerOrders.js'), 'utf8'));
   await until(() => Object.keys(bg.local.data.orders?.orders || {}).length === 3);
 
@@ -368,6 +387,131 @@ test('a message of an unknown type is left unanswered, and an empty one is ignor
   const bg = await startBackground(fakeTcgplayer());
   assert.equal(await bg.send({ type: 'no-such-message' }), undefined);
   assert.equal(await bg.send(null), undefined);
+});
+
+
+// ---- the price cache control in the header ---------------------------------------
+
+test('the header has a Clear price cache button, to the right of the title', async () => {
+  const bg = await startBackground(fakeTcgplayer());
+  const { document } = await openHome(bg, '#lists');
+  const top = document.querySelector('.app-header__top');
+  assert.deepEqual([...top.children].map((c) => c.tagName), ['H1', 'DIV'], 'title, then the tools on the right');
+  const button = top.querySelector('.app-header__tools #clearCache');
+  assert.equal(button.textContent, 'Clear price cache');
+  assert.equal(document.querySelectorAll('#clearCache').length, 1);
+  assert.ok(top.compareDocumentPosition(document.querySelector('.tabs')) & 4, 'above the tabs');
+});
+
+test('Clear price cache removes trends and prices, and never saved lists or the order archive', async () => {
+  const local = storageArea({
+    lists: { version: 1, lists: [] }, orders: { orders: {} },
+    'tr:1|english|near mint|holofoil': 1, 'tr:2': 1, 'ls:3|near mint|holofoil': 1,
+  });
+  const bg = await startBackground(fakeTcgplayer(), local);
+  const { document } = await openHome(bg, '#lists');
+  document.getElementById('clearCache').click();
+  await settle();
+  assert.deepEqual(Object.keys(local.data).filter((k) => !k.startsWith('tr:') && !k.startsWith('ls:')).sort(), ['lists', 'orders']);
+  assert.equal(Object.keys(local.data).some((k) => /^(tr|ls):/.test(k)), false);
+  assert.equal(document.getElementById('cacheStatus').textContent, 'Cleared 3 cached lookups.');
+});
+
+test('the cache message is singular for one lookup, and works from either tab', async () => {
+  const local = storageArea({ 'tr:1': 1 });
+  const bg = await startBackground(fakeTcgplayer(), local);
+  const { document } = await openHome(bg, '#orders');
+  document.getElementById('clearCache').click();
+  await settle();
+  assert.equal(document.getElementById('cacheStatus').textContent, 'Cleared 1 cached lookup.');
+});
+
+
+// ---- the toolbar button -----------------------------------------------------------
+
+test('clicking the toolbar button opens the dashboard directly, and each click opens one', async () => {
+  const bg = await startBackground(fakeTcgplayer());
+  bg.click();
+  await settle();
+  assert.deepEqual(bg.created, ['ext://test/home/home.html'], 'no fragment: the dashboard opens on the tab used last');
+  bg.click();
+  await settle();
+  assert.equal(bg.created.length, 2);
+});
+
+
+// ---- retrying ------------------------------------------------------------------
+
+const waitUntil = async (check, limit = 8000) => {
+  const start = Date.now();
+  while (!check() && Date.now() - start < limit) await settle(20);
+  return check();
+};
+
+test('a price TCGplayer is slow to give says it is retrying in the Order History view, and the totals wait for it', async () => {
+  const site = fakeTcgplayer({ failListings: 1, random: 0.999 });
+  const bg = await startBackground(site);
+  const { document } = await openHome(bg, '#orders');
+
+  assert.ok(await waitUntil(() => document.querySelector('.oitem__now .ptcg-now--retrying')), 'an item says it is retrying');
+  assert.equal(document.querySelector('.oitem__now .ptcg-now--retrying .ptcg-now__label').textContent, 'Retrying (1 of 4)\u2026');
+  assert.match(document.querySelector('.ptcg-total').textContent, /being retried|Checking prices/);
+
+  assert.ok(await waitUntil(() => !document.querySelector('.ptcg-now--loading')), 'it finishes');
+  assert.equal(document.querySelector('.ptcg-now--retrying'), null);
+  assert.match(document.querySelector('.ptcg-total').className, /ptcg-total--(higher|lower|same)/);
+  assert.doesNotMatch(document.querySelector('.ptcg-total__detail').textContent, /retried/);
+});
+
+test('reading the orders says TCGplayer did not answer and is being retried, then reports the read as complete', async () => {
+  const site = fakeTcgplayer({ failOrderPages: 1, random: 0.999 });
+  const bg = await startBackground(site);
+  const { document } = await openHome(bg, '#orders');
+  const status = () => document.querySelector('.orders-status').textContent;
+
+  assert.ok(await waitUntil(() => /Retrying \(1 of 4\)/.test(status())), 'the status line says so');
+  assert.match(status(), /TCGplayer did not answer/);
+
+  assert.ok(await waitUntil(() => /Up to date: read 6 orders/.test(status())), 'then the read completes');
+  assert.equal(document.querySelectorAll('.order').length, 6);
+});
+
+test('a read that keeps failing is reported as partial, not as retrying forever', async () => {
+  const site = fakeTcgplayer({ failOrderPages: 99 });
+  const bg = await startBackground(site);
+  const { document } = await openHome(bg, '#orders');
+  const status = () => document.querySelector('.orders-status').textContent;
+  assert.ok(await waitUntil(() => /Could not read your orders/.test(status())));
+  assert.equal(document.querySelector('.orders-status').getAttribute('data-error'), '1');
+  assert.equal(site.requests.filter((r) => /orderhistory/i.test(r.url) && r.method === 'GET').length, 5, 'one try and four retries');
+});
+
+
+test('a retry notice about something this page never asked for is ignored (it reaches every open dashboard tab)', async () => {
+  const bg = await startBackground(fakeTcgplayer());
+  const { document } = await openHome(bg, '#orders');
+  await until(() => document.querySelectorAll('.order').length === 6);
+  await until(() => !document.querySelector('.ptcg-now--loading'), 12000);
+  const before = document.querySelector('#view').innerHTML;
+  await bg.notify({ type: 'lookup-retry', kind: 'listing-price', ref: 'somebody-elses|near mint|holofoil', retry: 1, retries: 4, delayMs: 100 });
+  await bg.notify({ type: 'lookup-retry', kind: 'price-trend', ref: 'anything', retry: 1, retries: 4, delayMs: 100 });
+  await bg.notify({ type: 'something-else' });
+  await bg.notify(null);
+  await settle(50);
+  assert.equal(document.querySelector('#view').innerHTML, before);
+});
+
+test('a retry notice that arrives after the answer does not bring the "retrying" back', async () => {
+  const bg = await startBackground(fakeTcgplayer());
+  const { document } = await openHome(bg, '#orders');
+  await until(() => document.querySelectorAll('.order').length === 6);
+  await until(() => !document.querySelector('.ptcg-now--loading'), 12000);
+  const ref = [...document.querySelectorAll('.oitem[data-key]')][0].getAttribute('data-key');
+  const before = document.querySelector('#view').innerHTML;
+  await bg.notify({ type: 'lookup-retry', kind: 'listing-price', ref, retry: 1, retries: 4, delayMs: 100 });
+  await settle(50);
+  assert.equal(document.querySelector('.ptcg-now--retrying'), null);
+  assert.equal(document.querySelector('#view').innerHTML, before);
 });
 
 });

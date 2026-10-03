@@ -2,14 +2,14 @@
 :root {
   --paper: #f7f8f6; --surface: #ffffff; --ink: #12211a; --ink-soft: #5c6b64;
   --line: #dfe4de; --accent: #0d5c46; --danger: #b91c1c;
-  --gain: #1a7f37; --loss: #c62828;
+  --gain: #1a7f37; --loss: #c62828; --warn: #b45309;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #0e1512; --surface: #151d19; --ink: #e6ece8; --ink-soft: #93a29b;
     --line: #26322c; --accent: #5fd3ab; --danger: #fca5a5;
-    --gain: #4ade80; --loss: #f87171;
+    --gain: #4ade80; --loss: #f87171; --warn: #fbbf24;
   }
 }
 * { box-sizing: border-box; }
@@ -33,6 +33,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* ---- tabs ---------------------------------------------------------------- */
 
 .app-header { border-bottom: 2px solid var(--ink); }
+.app-header__top { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; }
+.app-header__tools { align-items: center; display: flex; gap: 12px; margin-left: auto; }
+#cacheStatus { color: var(--accent); font-size: 13px; }
+#clearCache { font-size: 13px; padding: 4px 12px; }
 .tabs { display: flex; gap: 4px; margin-top: 12px; }
 .tab { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--ink-soft); font-size: 15px; padding: 8px 16px; position: relative; top: 2px; }
 .tab:hover { color: var(--ink); }

@@ -14,6 +14,7 @@ import {
 } from '../../lib/ordersView.js';
 import { api } from '../../lib/runtime.js';
 import { readOrders } from '../../lib/orderReader.js';
+import { retryingState, isSettled } from '../../lib/retryState.js';
 
 const storage = api.storage.local;
 
@@ -72,9 +73,13 @@ export function mount(root) {
   const results = {};
   const requested = new Set();
 
-  function say(message, isError = false) {
+  function say(message, isError = false, signInUrl = '') {
     status.textContent = message;
     status.setAttribute('data-error', isError ? '1' : '0');
+    if (signInUrl) {
+      const link = make('a', { href: signInUrl, target: '_blank', rel: 'noopener noreferrer', className: 'sign-in' }, 'Sign in');
+      status.append(' ', link);
+    }
   }
 
   // ---- today's prices --------------------------------------------------------------
@@ -87,13 +92,24 @@ export function mount(root) {
     requested.add(key);
     let result;
     try {
-      result = await api.runtime.sendMessage({ type: 'listing-price', item: { productId: item.productId, condition: item.condition, fresh } });
+      result = await api.runtime.sendMessage({ type: 'listing-price', ref: key, item: { productId: item.productId, condition: item.condition, fresh } });
     } catch {
       result = null;
     }
     results[key] = result && result.status ? result : { status: 'unavailable' };
     if (mounted) updateResult(document, container, shown, key, results);
   }
+
+  // The background retries a lookup TCGplayer is not answering, and tells us, so the price
+  // says it is still loading and why, and the totals do not count it as an answer.
+  const onRetryNotice = (message) => {
+    if (!mounted || !message || message.type !== 'lookup-retry' || message.kind !== 'listing-price') return;
+    // Only for what this page asked about: the notice reaches every dashboard tab that is open.
+    if (!requested.has(message.ref) || isSettled(results[message.ref])) return;
+    results[message.ref] = retryingState(message);
+    updateResult(document, container, shown, message.ref, results);
+  };
+  api.runtime.onMessage.addListener(onRetryNotice);
 
   // ---- drawing ------------------------------------------------------------------
 
@@ -134,6 +150,9 @@ export function mount(root) {
         fetch: (...args) => window.fetch(...args),
         parseHtml: (html) => new DOMParser().parseFromString(html, 'text/html'),
         storage,
+        onRetry: ({ retry, retries }) => {
+          if (mounted) say(`TCGplayer did not answer. Retrying (${retry} of ${retries})\u2026`);
+        },
       });
     } catch (err) {
       result = { status: 'error', error: err && err.message ? err.message : String(err), count: 0 };
@@ -141,8 +160,8 @@ export function mount(root) {
     syncing = false;
     if (!mounted) return;
     syncOutcome = result;
-    const { text, isError } = describeSync(result, { range });
-    say(text, isError);
+    const { text, isError, signInUrl } = describeSync(result, { range });
+    say(text, isError, signInUrl);
     await draw();
   }
 
@@ -188,5 +207,6 @@ export function mount(root) {
   return () => {
     mounted = false;
     api.storage.onChanged.removeListener(onChanged);
+    api.runtime.onMessage.removeListener(onRetryNotice);
   };
 }

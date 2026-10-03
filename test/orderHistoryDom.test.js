@@ -241,3 +241,31 @@ test('the total counts shipping on both sides', () => {
   assert.match(box.querySelector('.ptcg-total__detail').textContent, /paid \$2\.39, ask \$1\.79/);
   assert.match(box.title, /Price plus shipping on both sides/);
 });
+
+// ---- while a lookup is being retried ------------------------------------------
+
+const RETRYING = { retrying: true, retry: 2, retries: 4 };
+
+test('a price being retried reads as still loading, and says why', () => {
+  const box = renderNow(page(), { paid: 13.99, result: RETRYING });
+  assert.match(box.className, /ptcg-now--loading/);
+  assert.match(box.className, /ptcg-now--retrying/);
+  assert.equal(box.querySelector(`.${NOW_CLASS}__label`).textContent, 'Retrying (2 of 4)\u2026');
+  assert.match(box.title, /TCGplayer did not answer/);
+  assert.equal(box.querySelector(`.${NOW_CLASS}__change`), null, 'no comparison is drawn from a non-answer');
+});
+
+test('the total does not call a price being retried "no price", and says some are being retried', () => {
+  const d = page();
+  const only = renderTotal(d, [{ paid: 10, quantity: 1, result: RETRYING }]);
+  assert.match(only.querySelector(`.${TOTAL_CLASS}__figure`).textContent, /Checking prices.*being retried/);
+  const plain = renderTotal(d, [{ paid: 10, quantity: 1, result: null }]);
+  assert.equal(plain.querySelector(`.${TOTAL_CLASS}__figure`).textContent, 'Checking prices\u2026');
+
+  const mixed = renderTotal(d, [
+    { paid: 10, quantity: 1, result: { status: 'ok', price: 12 } },
+    { paid: 10, quantity: 1, result: RETRYING },
+    { paid: 10, quantity: 1, result: null },
+  ]);
+  assert.match(mixed.querySelector(`.${TOTAL_CLASS}__detail`).textContent, /2 still loading \(1 being retried\)/);
+});

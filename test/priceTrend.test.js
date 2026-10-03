@@ -70,16 +70,17 @@ test('days with no sales are ignored, however they are priced', () => {
   assert.equal(zeros.reason, 'no-data');
 });
 
-test('direction bands: 3% either way is a move, anything less is flat', () => {
+test('direction bands: 1% either way is a move, anything less is flat', () => {
   const build = (recent, prior) => normalizeBuckets(daily([
     ...flatRun(recent, 3, 7), ...flatRun(prior, 3, 7),
   ]));
-  assert.equal(computeTrend(build(103, 100)).direction, 'up');
-  assert.equal(computeTrend(build(97, 100)).direction, 'down');
-  assert.equal(computeTrend(build(102.9, 100)).direction, 'flat');
-  assert.equal(computeTrend(build(97.1, 100)).direction, 'flat');
+  assert.equal(computeTrend(build(101, 100)).direction, 'up');
+  assert.equal(computeTrend(build(101.3, 100)).direction, 'up');
+  assert.equal(computeTrend(build(99, 100)).direction, 'down');
+  assert.equal(computeTrend(build(100.9, 100)).direction, 'flat');
+  assert.equal(computeTrend(build(99.1, 100)).direction, 'flat');
   assert.equal(computeTrend(build(100, 100)).direction, 'flat');
-  assert.equal(TREND.FLAT_BAND, 0.03);
+  assert.equal(TREND.FLAT_BAND, 0.01);
 });
 
 test('a rising card is reported as up, with the change as a fraction', () => {

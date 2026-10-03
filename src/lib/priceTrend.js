@@ -20,8 +20,14 @@
 import { median } from './stats.js';
 
 export const TREND = {
+  /**
+   * Bump when anything below changes what a trend says. Trends are cached with
+   * the version they were worked out under, and an older one is recomputed
+   * instead of being shown with the old rules.
+   */
+  VERSION: 2,
   /** Within this fraction either way, the price is called flat. */
-  FLAT_BAND: 0.03,
+  FLAT_BAND: 0.01,
   /** Each window needs at least this many days with sales... */
   MIN_DAYS: 3,
   /** ...and at least this many transactions in total. */
@@ -148,7 +154,7 @@ export function computeTrend(days) {
     lastTried = { recent, prior };
     if (!enough(recent) || !enough(prior)) continue;
 
-    // Rounded so a move of exactly 3% is not lost to floating point.
+    // Rounded so a move of exactly 1% is not lost to floating point.
     const pct = Math.round((recent.median / prior.median - 1) * 10000) / 10000;
     const direction = Math.abs(pct) >= TREND.FLAT_BAND ? (pct > 0 ? 'up' : 'down') : 'flat';
     const { latest, turning } = checkTurn(between(0, length), direction, recent.median);

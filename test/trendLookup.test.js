@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lookupTrend, trendCacheKey, TREND_CACHE_TTL_MS } from '../src/lib/trendLookup.js';
 import { createCache } from '../src/lib/cache.js';
+import { TREND } from '../src/lib/priceTrend.js';
 import { PIKACHU_HISTORY, GENESECT_HISTORY } from './fixtures/tcgplayerHistory.js';
 
 const ITEM = { productId: '712953', language: 'English', condition: 'Near Mint Holofoil' };
@@ -91,4 +92,23 @@ test('a quiet, uncertain answer is cached too — it is still the answer for now
   await lookupTrend(ITEM, deps);
   assert.equal(a.reason, 'no-data');
   assert.equal(calls, 1);
+});
+
+test('a trend cached under older rules is worked out again, not shown', async () => {
+  let calls = 0;
+  const cache = memoryCache();
+  const item = { productId: '712953', language: 'English', condition: 'Near Mint Holofoil' };
+  // What an earlier version stored: a "flat" verdict and no record of which rules made it.
+  await cache.set(trendCacheKey(item), { direction: 'flat', pct: 0.013, reason: 'ok', series: [] });
+  const deps = { fetchJson: async () => { calls += 1; return PIKACHU_HISTORY; }, cache };
+  const fresh = await lookupTrend(item, deps);
+  assert.equal(calls, 1, 'looked up again');
+  assert.equal(fresh.direction, 'down');
+  assert.equal(fresh.rules, TREND.VERSION);
+  await lookupTrend(item, deps);
+  assert.equal(calls, 1, 'and the new answer is cached');
+});
+
+test('trends are cached for one hour, as long as TCGplayer\'s own response is good for', () => {
+  assert.equal(TREND_CACHE_TTL_MS, 60 * 60 * 1000);
 });

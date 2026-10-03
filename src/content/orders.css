@@ -11,6 +11,7 @@
 .ptcg-now--higher .ptcg-now__change { color: #1a7f37; }
 .ptcg-now--lower .ptcg-now__change { color: #c62828; }
 .ptcg-now--loading, .ptcg-now--unknown { font-style: italic; color: #777; }
+.ptcg-now--retrying { color: #b45309; }
 
 /* The whole-page total, above the first order. */
 .ptcg-total {

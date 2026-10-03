@@ -83,3 +83,18 @@ test('nothing priced gives no total', () => {
 test('a total within one percent reads as level', () => {
   assert.equal(totalChange([{ paid: 100, result: ok(100.5) }]).direction, 'same');
 });
+
+test('a line being retried is still pending, and is counted as such', () => {
+  const retrying = { retrying: true, retry: 1, retries: 4 };
+  const t = totalChange([
+    { paid: 10, result: ok(12) },
+    { paid: 10, result: retrying },
+    { paid: 10, result: null },
+    { paid: 10, result: { status: 'unavailable' } },
+  ]);
+  assert.equal(t.counted, 1);
+  assert.equal(t.pending, 2, 'one not asked yet, one being retried');
+  assert.equal(t.retrying, 1);
+  assert.equal(t.missing, 1, 'a real "no price" answer is not the same thing');
+  assert.equal(totalChange([{ paid: 10, result: retrying }]), null, 'nothing priced yet');
+});

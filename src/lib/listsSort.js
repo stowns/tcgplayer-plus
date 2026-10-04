@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — ordering the items in saved lists.
+ * TCGPlayer+ — ordering the items in watch lists.
  * Pure functions: the trend data is passed in, never fetched here.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later

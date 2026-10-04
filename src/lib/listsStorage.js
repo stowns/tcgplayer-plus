@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — where saved lists live.
+ * TCGPlayer+ — where watch lists live.
  *
  * This is the only user-created data the extension holds, so reads are
  * defensive: a malformed entry is repaired or dropped, never allowed to throw

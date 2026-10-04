@@ -1,5 +1,5 @@
 /*
- * Runs the *built* background page and home page together and sorts saved lists,
+ * Runs the *built* background page and home page together and sorts watch lists,
  * each list on its own.
  * TCGplayer's history feed is stubbed with real captured responses.
  */

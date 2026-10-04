@@ -12,9 +12,9 @@ const lists = [
 ];
 
 test('saveButtonLabel says what will happen, or what already has', () => {
-  assert.equal(saveButtonLabel(0), 'Save to list');
-  assert.equal(saveButtonLabel(1), 'Saved in 1 list');
-  assert.equal(saveButtonLabel(3), 'Saved in 3 lists');
+  assert.equal(saveButtonLabel(0), 'Add to watch list');
+  assert.equal(saveButtonLabel(1), 'On 1 watch list');
+  assert.equal(saveButtonLabel(3), 'On 3 watch lists');
 });
 
 test('renderSaveControl builds a button that reflects saved state', () => {
@@ -22,7 +22,7 @@ test('renderSaveControl builds a button that reflects saved state', () => {
   const control = renderSaveControl(d, { lists, savedIn: ['a'], handlers: {} });
   d.body.append(control);
   const button = control.querySelector(`.${BUTTON_CLASS}`);
-  assert.equal(button.textContent, 'Saved in 1 list');
+  assert.equal(button.textContent, 'On 1 watch list');
   assert.equal(button.getAttribute('aria-expanded'), 'false');
   assert.equal(control.querySelector(`.${PANEL_CLASS}`).hidden, true, 'the panel starts closed');
 });
@@ -113,7 +113,7 @@ test('the control refreshes in place when lists change', () => {
   control.querySelector(`.${BUTTON_CLASS}`).click();
   control.update({ lists: [...lists, { id: 'c', name: 'Grails', items: [] }], savedIn: ['c'] });
 
-  assert.equal(control.querySelector(`.${BUTTON_CLASS}`).textContent, 'Saved in 1 list');
+  assert.equal(control.querySelector(`.${BUTTON_CLASS}`).textContent, 'On 1 watch list');
   assert.equal(control.querySelectorAll('input[type="checkbox"]').length, 3);
   assert.equal(control.querySelector(`.${PANEL_CLASS}`).hidden, false, 'it stays open while you work');
 });

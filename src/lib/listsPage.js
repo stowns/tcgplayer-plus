@@ -1,6 +1,6 @@
 /*
  * TCGPlayer+ — which list is showing, and which page of it.
- * Pure: the Saved Lists view keeps the state and calls these.
+ * Pure: the Watch Lists view keeps the state and calls these.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later
  */

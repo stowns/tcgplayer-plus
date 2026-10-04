@@ -51,6 +51,7 @@ a.oitem__name:hover { text-decoration: underline; }
 .oitem__paid-detail { color: var(--ink-soft); display: block; font-size: 11px; }
 .oitem__qty { color: var(--ink-soft); font-size: 12px; }
 .ptcg-now__detail { font-size: 11px; }
+.oitem__trend { flex: none; text-align: right; width: 124px; }
 .oitem__now { flex: none; width: 138px; }
 
 .ptcg-now { color: var(--ink-soft); font-size: 12px; line-height: 1.35; }
@@ -75,6 +76,7 @@ a.oitem__name:hover { text-decoration: underline; }
   .oitem { flex-wrap: wrap; }
   .oitem__body { flex-basis: calc(100% - 70px); }
   .oitem__paid, .oitem__now { text-align: left; width: auto; }
+  .oitem__trend { order: 3; text-align: left; width: 100%; }
   .order__head { grid-template-columns: 1fr; }
   .order__change { grid-column: 1; grid-row: auto; text-align: left; }
 }

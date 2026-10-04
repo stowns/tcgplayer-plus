@@ -67,7 +67,7 @@ test('a failed price-trend lookup is answered with an unknown trend, not silence
   assert.equal(result.direction, 'unknown');
 });
 
-test('open-lists opens the dashboard on the Saved Lists tab', async () => {
+test('open-lists opens the dashboard on the Watch Lists tab', async () => {
   const worker = await startWorker();
   assert.deepEqual({ ...(await worker.send({ type: 'open-lists' })) }, { opened: true });
   assert.equal(worker.tabs[0].url, 'chrome-extension://abc/home/home.html#lists');

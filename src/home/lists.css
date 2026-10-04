@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The Saved Lists view. Page-wide styles live in home.css. */
+/* The Watch Lists view. Page-wide styles live in home.css. */
 .list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-top: 18px; padding: 16px 18px; }
 .list__header { align-items: baseline; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 12px; padding-bottom: 10px; }
 .list__name { font-size: 17px; margin: 0; }

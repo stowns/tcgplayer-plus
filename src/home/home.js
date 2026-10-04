@@ -15,7 +15,7 @@ import { api } from '../lib/runtime.js';
 const VIEWS = { lists, orders };
 const IDS = Object.keys(VIEWS);
 const LAST_KEY = 'ptcg.lastView';
-const TITLES = { lists: 'Saved Lists', orders: 'Order History' };
+const TITLES = { lists: 'Watch Lists', orders: 'Order History' };
 
 const root = document.getElementById('view');
 const tabs = [...document.querySelectorAll('.tab')];
@@ -64,7 +64,7 @@ window.addEventListener('hashchange', () => show(viewFromHash(location.hash, IDS
 show(viewFromHash(location.hash, IDS, remembered()));
 
 // Prices and trends are looked up from TCGplayer and kept for a while; this throws them away
-// so the next look is fresh. Saved lists and orders are never touched.
+// so the next look is fresh. Watch lists and orders are never touched.
 const cacheStatus = document.getElementById('cacheStatus');
 let cacheTimer = null;
 document.getElementById('clearCache').addEventListener('click', async () => {

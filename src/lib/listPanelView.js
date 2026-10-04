@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — the "Save to list" control on a product page.
+ * TCGPlayer+ — the "Add to watch list" control on a product page.
  *
  * Builds DOM and calls back; it knows nothing about storage or the extension
  * APIs, so the whole interaction is testable in jsdom.
@@ -13,8 +13,8 @@ export const BUTTON_CLASS = 'ptcg-list-button';
 export const PANEL_CLASS = 'ptcg-list-panel';
 
 export function saveButtonLabel(savedCount) {
-  if (!savedCount) return 'Save to list';
-  return `Saved in ${savedCount} list${savedCount === 1 ? '' : 's'}`;
+  if (!savedCount) return 'Add to watch list';
+  return `On ${savedCount} watch list${savedCount === 1 ? '' : 's'}`;
 }
 
 /**
@@ -63,7 +63,7 @@ export function renderSaveControl(doc, { lists, savedIn, handlers = {} }) {
   const manage = doc.createElement('button');
   manage.type = 'button';
   manage.className = 'ptcg-list-manage';
-  manage.textContent = 'Manage lists';
+  manage.textContent = 'Manage watch lists';
   manage.addEventListener('click', () => handlers.onManage && handlers.onManage());
 
   panel.append(rows, error, form, manage);

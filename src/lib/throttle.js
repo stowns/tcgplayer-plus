@@ -1,6 +1,6 @@
 /*
  * TCGPlayer+ — polite request pacing.
- * A saved list or an order history can hold dozens of cards; asking about all of
+ * A watch list or an order history can hold dozens of cards; asking about all of
  * them at once is rude to the server and risks being blocked, so requests are
  * queued and spaced out.
  * Copyright (C) 2026  Simon Townsend

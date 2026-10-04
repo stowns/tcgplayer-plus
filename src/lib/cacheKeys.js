@@ -1,6 +1,6 @@
 /*
  * TCGPlayer+ — which storage entries are disposable lookups.
- * Saved Lists and the order archive are NOT in this list, so "Clear cache"
+ * Watch Lists and the order archive are NOT in this list, so "Clear cache"
  * can never delete them.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later

@@ -17,7 +17,7 @@ import { api, onMessage } from './lib/runtime.js';
 
 const storage = api.storage.local;
 
-// A saved list can hold hundreds of cards; keep the requests gentle. Every request
+// A watch list can hold hundreds of cards; keep the requests gentle. Every request
 // goes through this client: paced, and retried with backoff and jitter when TCGplayer
 // is slow or briefly failing.
 const client = createClient({

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   describeSync,
-  formatOrderDate, productPageUrl, renderOrder, renderOrders, renderNotice, renderOrderChange, updateResult, itemKeyOf, linesFor,
+  formatOrderDate, productPageUrl, renderOrder, renderOrders, renderNotice, renderOrderChange, updateResult, itemKeyOf, linesFor, trendKeyOf, updateOrderTrend,
 } from '../src/lib/ordersView.js';
 import { parseOrders } from '../src/lib/orderParse.js';
 import { ORDERS, orderPage } from './fixtures/orderHistoryFull.js';
@@ -263,4 +263,91 @@ test('describeSync: signed out offers the sign-in page, and no other outcome doe
   for (const status of ['ok', 'partial', 'error']) {
     assert.equal(describeSync({ status, count: 1, error: 'x' }).signInUrl, undefined, status);
   }
+});
+
+// ---- the price trend beside each item (the picture the Watch Lists view draws) ----
+
+const TREND_UP = {
+  direction: 'up', pct: 0.082, windowDays: 7, reason: 'ok',
+  recent: { median: 12.5, days: 7, sales: 40 }, prior: { median: 11.55, days: 7, sales: 35 },
+  series: [11.5, 11.8, 11.6, 12, 12.3, 12.1, 12.6].map((price, i) => ({ date: `2026-09-${24 + i}`, price })),
+  outliersHidden: 0, sku: { skuId: '1', condition: 'Near Mint', variant: 'Holofoil' },
+};
+const TREND_DOWN = { ...TREND_UP, direction: 'down', pct: -0.12 };
+
+test('a trend is looked up by the card and its condition, so orders holding the same card share it', () => {
+  const [lapras] = orders[0].items;
+  assert.equal(trendKeyOf(lapras), '696683|english|near mint|holofoil');
+  assert.equal(trendKeyOf({ ...lapras, paid: null }), trendKeyOf(lapras), 'what was paid does not matter');
+  assert.notEqual(trendKeyOf({ ...lapras, condition: 'Lightly Played Holofoil' }), trendKeyOf(lapras));
+  assert.equal(trendKeyOf({ ...lapras, productId: null }), '');
+});
+
+test('every item has a trend cell, saying it is checking until the trend arrives', () => {
+  const li = renderOrder(doc(), orders[0]).querySelector('.oitem');
+  assert.equal(li.getAttribute('data-trend-key'), '696683|english|near mint|holofoil');
+  const trend = li.querySelector('.oitem__trend .trend');
+  assert.match(trend.className, /trend--loading/);
+  assert.equal(trend.querySelector('.trend__summary').textContent, 'Checking trend\u2026');
+});
+
+test('a trend that has arrived is drawn exactly as on the Watch Lists view', () => {
+  const key = trendKeyOf(orders[0].items[0]);
+  const li = renderOrder(doc(), orders[0], {}, { [key]: TREND_UP }).querySelector('.oitem');
+  const trend = li.querySelector('.oitem__trend .trend');
+  assert.match(trend.className, /trend--up/);
+  assert.equal(trend.querySelector('.trend__summary').textContent, '\u25B2 +8.2%');
+  assert.equal(trend.querySelector('.trend__label').textContent, 'vs previous 7 days');
+  assert.ok(trend.querySelector('.trend__stat--sales'), 'recent sales');
+  assert.ok(trend.querySelector('.trend__stat--volatility'), 'volatility');
+  assert.ok(trend.querySelector('svg.sparkline, .sparkline'), 'the sparkline');
+});
+
+test('a trend being retried says so', () => {
+  const key = trendKeyOf(orders[0].items[0]);
+  const li = renderOrder(doc(), orders[0], {}, { [key]: { retrying: true, retry: 2, retries: 4 } }).querySelector('.oitem');
+  const trend = li.querySelector('.oitem__trend .trend');
+  assert.equal(trend.getAttribute('data-retrying'), '1');
+  assert.equal(trend.querySelector('.trend__summary').textContent, 'Retrying (2 of 4)\u2026');
+});
+
+test('an item with no product has no trend to show', () => {
+  const o = structuredClone(orders[0]);
+  o.items[0].productId = null;
+  const li = renderOrder(doc(), o).querySelector('.oitem');
+  assert.equal(li.getAttribute('data-trend-key'), null);
+  assert.equal(li.querySelector('.oitem__trend').children.length, 0);
+});
+
+test('renderOrders hands the trends to every order', () => {
+  const d = doc();
+  const c = d.getElementById('c');
+  const trends = Object.fromEntries(orders.flatMap((o) => o.items).map((i) => [trendKeyOf(i), TREND_DOWN]));
+  renderOrders(d, c, orders, {}, trends);
+  const cells = [...c.querySelectorAll('.oitem__trend .trend')];
+  assert.equal(cells.length, 10);
+  assert.ok(cells.every((t) => /trend--down/.test(t.className)));
+});
+
+test('updateOrderTrend swaps a trend in every row of that card, without redrawing the orders', () => {
+  const d = doc();
+  const c = d.getElementById('c');
+  const twice = [orders[0], { ...structuredClone(orders[0]), orderNumber: 'SECOND' }];
+  renderOrders(d, c, twice);
+  const row = c.querySelector('.oitem');
+  const key = trendKeyOf(orders[0].items[0]);
+  assert.equal(updateOrderTrend(c, key, TREND_UP), true);
+  assert.equal(c.querySelector('.oitem'), row, 'the row is the same element');
+  const cells = [...c.querySelectorAll('.oitem__trend .trend')];
+  assert.equal(cells.length, 2);
+  assert.ok(cells.every((t) => /trend--up/.test(t.className)), 'both orders show it');
+  assert.equal(updateOrderTrend(c, 'no|such|key', TREND_UP), false);
+  assert.equal(updateOrderTrend(c, key, { retrying: true, retry: 1, retries: 4 }), true);
+  assert.equal(c.querySelector('.oitem__trend .trend__summary').textContent, 'Retrying (1 of 4)\u2026');
+});
+
+test('the trend cell does not disturb the price or the totals', () => {
+  const li = renderOrder(doc(), orders[0], { [laprasKey]: ok(9.5) }).querySelector('.oitem');
+  assert.equal(li.querySelector('.oitem__now .ptcg-now__price').textContent, 'Ask $9.50');
+  assert.equal(li.querySelector('.oitem__paid-price').textContent, '$13.99');
 });

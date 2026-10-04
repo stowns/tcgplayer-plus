@@ -10,7 +10,7 @@ import {
   loadArchive, ordersInRange, rangeChoices, ALL_SAVED, ORDERS_KEY,
 } from '../../lib/ordersArchive.js';
 import {
-  renderOrders, renderNotice, updateResult, itemKeyOf, describeSync, describeAge,
+  renderOrders, renderNotice, updateResult, updateOrderTrend, itemKeyOf, trendKeyOf, describeSync, describeAge,
 } from '../../lib/ordersView.js';
 import { api } from '../../lib/runtime.js';
 import { readOrders } from '../../lib/orderReader.js';
@@ -72,6 +72,9 @@ export function mount(root) {
   let shown = [];
   const results = {};
   const requested = new Set();
+  const trends = {};            // trend key -> trend, kept so a redraw never flashes back to "checking"
+  const trendRequested = new Set();
+  let itemsByTrendKey = new Map();
 
   function say(message, isError = false, signInUrl = '') {
     status.textContent = message;
@@ -100,14 +103,46 @@ export function mount(root) {
     if (mounted) updateResult(document, container, shown, key, results);
   }
 
+  // ---- price trends ------------------------------------------------------------------
+  // The same picture the Watch Lists view shows. Fetched only for items that scroll into view
+  // (the totals above do not need them), and shared by every order that holds the same card.
+
+  async function requestTrend(key) {
+    const item = itemsByTrendKey.get(key);
+    if (!item || trendRequested.has(key)) return;
+    trendRequested.add(key);
+    let result;
+    try {
+      result = await api.runtime.sendMessage({ type: 'price-trend', ref: key, item: { productId: item.productId, condition: item.condition } });
+    } catch {
+      result = null;
+    }
+    trends[key] = result || { direction: 'unknown', pct: null, series: [], outliersHidden: 0, reason: 'unavailable' };
+    if (mounted) updateOrderTrend(container, key, trends[key]);
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      requestTrend(entry.target.getAttribute('data-trend-key'));
+    }
+  }, { rootMargin: '200px' });
+
   // The background retries a lookup TCGplayer is not answering, and tells us, so the price
-  // says it is still loading and why, and the totals do not count it as an answer.
+  // (or trend) says it is still loading and why, and the totals do not count it as an answer.
   const onRetryNotice = (message) => {
-    if (!mounted || !message || message.type !== 'lookup-retry' || message.kind !== 'listing-price') return;
+    if (!mounted || !message || message.type !== 'lookup-retry') return;
     // Only for what this page asked about: the notice reaches every dashboard tab that is open.
-    if (!requested.has(message.ref) || isSettled(results[message.ref])) return;
-    results[message.ref] = retryingState(message);
-    updateResult(document, container, shown, message.ref, results);
+    if (message.kind === 'listing-price') {
+      if (!requested.has(message.ref) || isSettled(results[message.ref])) return;
+      results[message.ref] = retryingState(message);
+      updateResult(document, container, shown, message.ref, results);
+    } else if (message.kind === 'price-trend') {
+      if (!trendRequested.has(message.ref) || isSettled(trends[message.ref])) return;
+      trends[message.ref] = retryingState(message);
+      updateOrderTrend(container, message.ref, trends[message.ref]);
+    }
   };
   api.runtime.onMessage.addListener(onRetryNotice);
 
@@ -124,8 +159,13 @@ export function mount(root) {
         syncOutcome && syncOutcome.status === 'signed-out' ? 'signed-out'
           : Object.keys(archive.orders).length ? 'empty-range' : 'empty', { range }));
     } else {
-      renderOrders(document, container, shown, results);
+      renderOrders(document, container, shown, results, trends);
       for (const order of shown) order.items.forEach((item) => requestPrice(item, freshPrices));
+      itemsByTrendKey = new Map(shown.flatMap((o) => o.items).filter((i) => trendKeyOf(i)).map((i) => [trendKeyOf(i), i]));
+      observer.disconnect();
+      for (const li of container.querySelectorAll('.oitem[data-trend-key]')) {
+        if (!isSettled(trends[li.getAttribute('data-trend-key')])) observer.observe(li);
+      }
     }
     age.textContent = range === ALL_SAVED
       ? `${Object.keys(archive.orders).length} saved`
@@ -178,6 +218,8 @@ export function mount(root) {
   refresh.addEventListener('click', async () => {
     requested.clear();
     for (const key of Object.keys(results)) delete results[key];
+    trendRequested.clear();
+    for (const key of Object.keys(trends)) delete trends[key];
     freshPrices = true;
     await sync();
     freshPrices = false;
@@ -208,5 +250,6 @@ export function mount(root) {
     mounted = false;
     api.storage.onChanged.removeListener(onChanged);
     api.runtime.onMessage.removeListener(onRetryNotice);
+    observer.disconnect();
   };
 }

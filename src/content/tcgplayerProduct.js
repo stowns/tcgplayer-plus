@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — "Save to list" on TCGplayer product pages.
+ * TCGPlayer+ — "Add to watch list" on TCGplayer product pages.
  * TCGplayer has no way to keep a product for later; this adds one that is kept
  * separate from browser bookmarks.
  * Copyright (C) 2026  Simon Townsend

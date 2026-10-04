@@ -45,7 +45,7 @@ forEachBrowser(() => {
 test('the built script adds a Save control to the product page', async () => {
   const { document } = await load();
   assert.ok(button(document), 'a save button is injected');
-  assert.equal(button(document).textContent, 'Save to list');
+  assert.equal(button(document).textContent, 'Add to watch list');
   assert.ok(document.querySelector('.product-details__header .ptcg-list-control'), 'next to the title');
 });
 
@@ -58,7 +58,7 @@ test('a page with no header still gets the control, in a bar at the top of the p
   assert.doesNotMatch(NO_HEADER_PAGE, /product-details__name/, 'the fixture really has no heading');
   const bare = await load({ lists: { version: 1, lists: [{ id: 'a', name: 'Watchlist', items: [] }] } }, NO_HEADER_PAGE);
   assert.ok(bare.document.querySelector('.product-details > .ptcg-save-bar .ptcg-list-control'));
-  assert.equal(button(bare.document).textContent, 'Save to list');
+  assert.equal(button(bare.document).textContent, 'Add to watch list');
   assert.equal(bare.document.querySelectorAll('.ptcg-list-control').length, 1);
   button(bare.document).click();
   const box = bare.document.querySelector('.ptcg-list-panel input[type="checkbox"]');
@@ -138,7 +138,7 @@ test('creating a list from the panel saves the card into it', async () => {
     },
   );
   assert.equal(list.items[0].priceAtSave.market, 45.59, 'the price at the time is kept');
-  assert.equal(button(document).textContent, 'Saved in 1 list');
+  assert.equal(button(document).textContent, 'On 1 watch list');
 });
 
 test('the button shows where a product is already saved when the page opens', async () => {
@@ -151,7 +151,7 @@ test('the button shows where a product is already saved when the page opens', as
       ],
     },
   });
-  assert.equal(button(document).textContent, 'Saved in 1 list');
+  assert.equal(button(document).textContent, 'On 1 watch list');
   button(document).click();
   const boxes = [...document.querySelectorAll('.ptcg-list-panel input[type="checkbox"]')];
   assert.deepEqual(boxes.map((b) => b.checked), [true, false]);
@@ -201,7 +201,7 @@ test('a refused name is reported in the panel, not swallowed', async () => {
   assert.match(document.querySelector('.ptcg-list-error').textContent, /already exists/i);
 });
 
-test('Manage lists asks the extension to open the lists page', async () => {
+test('Manage watch lists asks the extension to open the lists page', async () => {
   const { document, messages } = await load();
   button(document).click();
   document.querySelector('.ptcg-list-manage').click();
@@ -219,7 +219,7 @@ test('the panel stays open while ticking a list, then closes on an outside click
   box.click(); // real click: fires click, then change, then the rows are redrawn
   await settle();
   assert.equal(panel().hidden, false, 'saving must not dismiss the panel');
-  assert.equal(button(document).textContent, 'Saved in 1 list');
+  assert.equal(button(document).textContent, 'On 1 watch list');
 
   document.querySelector('.product-details__name').click();
   assert.equal(panel().hidden, true, 'clicking elsewhere on the page closes it');

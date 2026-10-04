@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — the Saved Lists view.
+ * TCGPlayer+ — the Watch Lists view.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -33,8 +33,8 @@ export function mount(root) {
   const header = make('div', { className: 'page-header' });
   const intro = make('div');
   intro.append(
-    make('h2', {}, 'Saved Lists'),
-    make('p', { className: 'intro' }, 'Products you have kept from TCGplayer, stored in this browser and separate from your bookmarks.'),
+    make('h2', {}, 'Watch Lists'),
+    make('p', { className: 'intro' }, 'Products you are watching on TCGplayer, stored in this browser and separate from your bookmarks.'),
   );
   const actions = make('div', { className: 'page-actions' });
   const newList = make('button', { type: 'button' }, 'New list');

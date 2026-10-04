@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cachedLookupKeys, clearCachedLookups, CACHE_PREFIXES } from '../src/lib/cacheKeys.js';
 
-test('"Clear cache" removes price lookups and never the saved lists or the order archive', () => {
+test('"Clear cache" removes price lookups and never the watch lists or the order archive', () => {
   const keys = ['lists', 'orders', 'tr:1', 'ls:2', 'settings', 'ptcg.lastView'];
   assert.deepEqual(cachedLookupKeys(keys), ['tr:1', 'ls:2']);
   assert.deepEqual(CACHE_PREFIXES, ['tr:', 'ls:']);

@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — rendering the saved lists page.
+ * TCGPlayer+ — rendering the watch lists page.
  * Text comes from web pages, so everything goes in through textContent.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -383,7 +383,7 @@ export function renderLists(doc, container, state, handlers = {}, trends, asks, 
   container.textContent = '';
   if (state.lists.length === 0) {
     container.append(el(doc, 'p', 'empty',
-      'No lists yet. Open a TCGplayer product page and choose "Save to list".'));
+      'No lists yet. Open a TCGplayer product page and choose "Add to watch list".'));
     return container;
   }
   const selected = resolveSelection(state.lists, view.selectedId);

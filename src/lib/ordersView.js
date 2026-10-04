@@ -15,6 +15,8 @@ import { totalChange } from './priceCompare.js';
 import { listingCacheKey } from './listingLookup.js';
 import { allocateShipping, costLine, landedPaid } from './orderCost.js';
 import { renderNow, renderTotal, comparisonSummary } from './orderHistoryDom.js';
+import { renderTrend } from './listsPageView.js';
+import { trendCacheKey } from './trendLookup.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -56,6 +58,9 @@ export const itemKeyOf = (item) => listingCacheKey({ productId: item.productId, 
 
 const lookupable = (item) => item.productId && Number.isFinite(item.paid);
 
+/** What a trend is looked up (and cached) by: the card and its condition, however many orders hold it. '' if there is no product. */
+export const trendKeyOf = (item) => (item.productId ? trendCacheKey({ productId: item.productId, condition: item.condition }) : '');
+
 /** Lines for `totalChange`: each item, price plus shipping on both sides, with the answer we have if any. */
 export function linesFor(orders, results) {
   return orders.flatMap((order) => {
@@ -69,9 +74,11 @@ export function linesFor(orders, results) {
   });
 }
 
-function renderItem(doc, item, results, share = 0) {
+function renderItem(doc, item, results, share = 0, trends = {}) {
   const li = el(doc, 'li', 'oitem');
   li.setAttribute('data-key', lookupable(item) ? itemKeyOf(item) : '');
+  const trendKey = trendKeyOf(item);
+  if (trendKey) li.setAttribute('data-trend-key', trendKey);
 
   // The order page's own thumbnail is 25px wide; the 200px picture is sharper, with that as the fallback.
   const pictures = imageCandidates(item.productId, item.imageUrl);
@@ -99,6 +106,11 @@ function renderItem(doc, item, results, share = 0) {
   if (meta) body.append(el(doc, 'p', 'oitem__meta', meta));
   if (item.seller) body.append(el(doc, 'p', 'oitem__seller', `Sold by ${item.seller.name}`));
   li.append(body);
+
+  // Where its price has been going, the same picture the Watch Lists view draws.
+  const trend = el(doc, 'div', 'oitem__trend');
+  if (trendKey) trend.append(renderTrend(doc, trends[trendKey] || null));
+  li.append(trend);
 
   // What it cost: the price, plus this item's share of the order's shipping.
   const paid = el(doc, 'div', 'oitem__paid');
@@ -130,7 +142,7 @@ export function renderOrderChange(doc, order, results) {
   return chip;
 }
 
-export function renderOrder(doc, order, results = {}) {
+export function renderOrder(doc, order, results = {}, trends = {}) {
   const article = el(doc, 'article', 'order');
   article.setAttribute('data-order', order.orderNumber);
 
@@ -164,7 +176,7 @@ export function renderOrder(doc, order, results = {}) {
 
   const list = el(doc, 'ul', 'oitem-list');
   const shares = allocateShipping(order.summary, order.items);
-  order.items.forEach((item, at) => list.append(renderItem(doc, item, results, shares[at])));
+  order.items.forEach((item, at) => list.append(renderItem(doc, item, results, shares[at], trends)));
   if (!order.items.length) list.append(el(doc, 'li', 'oitem oitem--empty', 'No items were read for this order.'));
   article.append(list);
 
@@ -209,12 +221,12 @@ export function renderNotice(doc, kind, { range = '' } = {}) {
  * The whole list plus the total above it.
  * @returns {{orders: number, items: number}}
  */
-export function renderOrders(doc, container, orders, results = {}) {
+export function renderOrders(doc, container, orders, results = {}, trends = {}) {
   container.replaceChildren();
   if (!orders.length) return { orders: 0, items: 0 };
   container.append(renderSummary(doc, orders, results));
   const list = el(doc, 'div', 'order-list');
-  for (const order of orders) list.append(renderOrder(doc, order, results));
+  for (const order of orders) list.append(renderOrder(doc, order, results, trends));
   container.append(list);
   return { orders: orders.length, items: orders.reduce((n, o) => n + o.items.length, 0) };
 }
@@ -228,6 +240,22 @@ export function renderSummary(doc, orders, results) {
   box.append(el(doc, 'p', 'orders-summary__facts',
     `${orders.length} order${orders.length === 1 ? '' : 's'} · ${items} item${items === 1 ? '' : 's'} · ${formatMoney(spent)} spent including shipping and tax`));
   return box;
+}
+
+/**
+ * Swap a trend in place in every row that holds that card, without redrawing the orders.
+ * @returns {boolean} whether any row was found
+ */
+export function updateOrderTrend(container, key, trend) {
+  let found = false;
+  for (const li of container.querySelectorAll('.oitem[data-trend-key]')) {
+    if (li.getAttribute('data-trend-key') !== key) continue;
+    const cell = li.querySelector('.oitem__trend');
+    if (!cell) continue;
+    cell.replaceChildren(renderTrend(container.ownerDocument, trend));
+    found = true;
+  }
+  return found;
 }
 
 /** Patch one answer into every row that shares its key, and refresh the totals. */

@@ -2,7 +2,7 @@
 
 A Firefox and Chrome extension that adds what TCGplayer is missing:
 
-- **Saved Lists.** Keep products for later in your own lists (separate from
+- **Watch Lists.** Keep products for later in your own lists (separate from
   your bookmarks), each with a price trend and a 30-day chart.
 - **Order History.** Your purchases laid out for reading, kept in this browser
   after TCGplayer stops listing them, with what each card would cost today and
@@ -60,15 +60,15 @@ numbers or does not match `package.json`, or a missing icon size. Bump the
 version in both `package.json` and `manifest/base.json` for each upload; the
 stores refuse a version they already have.
 
-## Saved Lists
+## Watch Lists
 
 TCGplayer has no way to keep a product for later. On any product page the
-extension adds a **Save to list** button beside the card name. Click it to tick
+extension adds an **Add to watch list** button beside the card name. Click it to tick
 the lists it belongs in, or type a name to start a new one — creating a list
 from that panel saves the card into it straight away. The button then reads
-"Saved in 2 lists", so you can see at a glance what you have already kept.
+"On 2 watch lists", so you can see at a glance what you have already kept.
 
-**Manage lists** opens the Saved Lists tab of TCGPlayer+, where you
+**Manage watch lists** opens the Watch Lists tab of TCGPlayer+, where you
 can rename and delete lists, remove items, and export everything as JSON.
 
 These lists are deliberately separate from your bookmarks: they live in the
@@ -108,7 +108,7 @@ either of the others.
 
 ### Choosing a list, and paging
 
-The Saved Lists tab shows one list at a time. Pick it from the **List**
+The Watch Lists tab shows one list at a time. Pick it from the **List**
 dropdown (each entry shows its card count). **Show** sets how many cards appear
 at once: 25 (the default), 50, 75 or All. A list longer than that has a pager,
 above and below its cards: "Showing 26–50 of 140" with **Previous** and
@@ -181,7 +181,7 @@ The details that make it trustworthy:
 Trends are fetched only for items that scroll into view, at most two requests at
 a time, and cached for one hour, which is as long as TCGplayer's own response is
 good for (**Clear price cache**, at the right of the dashboard's header, removes
-them; saved lists and orders are never touched). TCGplayer's feed only accepts a
+them; watch lists and orders are never touched). TCGplayer's feed only accepts a
 whole range (`month`, `quarter`, ...), not "just today", so a refresh fetches the
 month again. If the feed stays unreachable the row says "Trend unavailable" and
 nothing else is affected. The feed is undocumented, so it could change without
@@ -219,11 +219,11 @@ did get and reports that it stopped part-way.
 
 ## The TCGPlayer+ home page
 
-Clicking the toolbar button opens a page with one tab per view: **Saved Lists** (above) and **Order History**. It opens on the tab you used last. There is no popup in between.
+Clicking the toolbar button opens a page with one tab per view: **Watch Lists** (above) and **Order History**. It opens on the tab you used last. There is no popup in between.
 
 ### Order History tab
 
-Your TCGplayer purchases, laid out for reading: for each order the date, order number, seller, channel, shipping status and totals, and for each item its name (linked to the product page), set, rarity, condition, the price you paid, and what it would cost today (same method, colours and caveats as on TCGplayer's own order page, below). At the top, the **total gain or loss** across the orders shown, and each order's own.
+Your TCGplayer purchases, laid out for reading: for each order the date, order number, seller, channel, shipping status and totals, and for each item its name (linked to the product page), set, rarity, condition, the price you paid, and what it would cost today (same method, colours and caveats as on TCGplayer's own order page, below). Each item also shows the **price trend** for that card and condition, the same picture as in Watch Lists (arrow, percent change, recent sales, volatility and sparkline; see Price trend above). Trends are fetched only for items that scroll into view, and orders holding the same card share one lookup. At the top, the **total gain or loss** across the orders shown, and each order's own.
 
 - **Not shown, and never stored:** SHIP TO, BILL TO, your name, addresses, and the Contact Seller / Rate Transaction buttons. The reader names the fields it wants rather than filtering out the ones it does not; a test proves no address text can reach storage.
 - **Where it comes from.** Opening the tab reads your Order History from TCGplayer using your signed-in session (only if the last read is over ten minutes old; **Refresh** forces it). Visiting TCGplayer's own Order History page also saves what it shows.

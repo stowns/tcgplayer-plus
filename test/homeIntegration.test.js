@@ -10,6 +10,7 @@ import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionAp
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { ORDERS, orderPage, SIGNED_OUT_PAGE } from './fixtures/orderHistoryFull.js';
 import { LAPRAS_LISTINGS, NO_LISTINGS } from './fixtures/tcgplayerListings.js';
+import { PIKACHU_HISTORY } from './fixtures/tcgplayerHistory.js';
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 const until = async (check, limit = 8000) => {
@@ -54,13 +55,17 @@ function storageArea(initial = {}) {
 
 /** A tiny TCGplayer. `orders` are the pages of markup it serves; the range is session state. */
 function fakeTcgplayer({
-  pages = [ORDERS.slice(0, 3), ORDERS.slice(3)], loggedIn = true, range = 'Last 30 Days', random = 0, failListings = 0, failOrderPages = 0,
+  pages = [ORDERS.slice(0, 3), ORDERS.slice(3)], loggedIn = true, range = 'Last 30 Days', random = 0, failListings = 0, failOrderPages = 0, failHistory = 0,
 } = {}) {
   // `random` is what retry jitter draws (0: no wait); `failListings` / `failOrderPages` answer 503 that many times first.
-  const site = { range, requests: [], posts: [], pages, loggedIn, random, failListings, failOrderPages };
+  const site = { range, requests: [], posts: [], pages, loggedIn, random, failListings, failOrderPages, failHistory };
   site.fetch = async (url, init = {}) => {
     site.requests.push({ url, method: init.method || 'GET' });
     const reply = (text, extra = {}) => ({ ok: true, status: 200, url, text: async () => text, json: async () => JSON.parse(text), ...extra });
+    if (/infinite-api\.tcgplayer\.com\/price\/history\/(\d+)\/detailed/.test(url)) {
+      if (site.failHistory > 0) { site.failHistory -= 1; return { ok: false, status: 503, url, text: async () => '', json: async () => ({}) }; }
+      return reply(JSON.stringify(PIKACHU_HISTORY));
+    }
     if (/mp-search-api\.tcgplayer\.com\/v1\/product\/(\d+)\/listings/.test(url) && site.failListings > 0) {
       site.failListings -= 1;
       return { ok: false, status: 503, url, text: async () => '', json: async () => ({}) };
@@ -114,7 +119,21 @@ async function openHome(background, hash = '#orders') {
   freezeClock(window);
   window.fetch = background.site.fetch; // the page reads the order pages itself
   window.Math.random = () => background.site.random;
-  window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
+  // Nothing is "on screen" until a test says so; `show` reports rows as scrolled into view.
+  const seen = new Set();
+  const observers = [];
+  window.IntersectionObserver = class {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { seen.add(target); }
+    unobserve(target) { seen.delete(target); }
+    disconnect() { seen.clear(); }
+  };
+  const reveal = async (selector = '.oitem[data-trend-key]') => {
+    const rows = [...window.document.querySelectorAll(selector)].filter((row) => seen.has(row));
+    if (rows.length) observers.at(-1).callback(rows.map((target) => ({ isIntersecting: true, target })));
+    await settle(30);
+    return rows.length;
+  };
   const sent = [];
   window[apiName()] = {
     storage: { local: background.local, onChanged: {
@@ -126,7 +145,7 @@ async function openHome(background, hash = '#orders') {
   window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
   return {
-    window, document: window.document, sent,
+    window, document: window.document, sent, reveal,
   };
 }
 
@@ -136,13 +155,13 @@ const orderNumbers = (d) => [...d.querySelectorAll('.order')].map((a) => a.getAt
 
 forEachBrowser(() => {
 
-test('the home page opens on Saved Lists, with both tabs', async () => {
+test('the home page opens on Watch Lists, with both tabs', async () => {
   const bg = await startBackground(fakeTcgplayer());
   const { document } = await openHome(bg, '');
   assert.equal(selectedTab(document), 'lists');
-  assert.deepEqual([...document.querySelectorAll('.tab')].map((t) => t.textContent), ['Saved Lists', 'Order History']);
-  assert.match(document.title, /Saved Lists/);
-  assert.match(document.querySelector('#view').textContent, /Saved Lists/);
+  assert.deepEqual([...document.querySelectorAll('.tab')].map((t) => t.textContent), ['Watch Lists', 'Order History']);
+  assert.match(document.title, /Watch Lists/);
+  assert.match(document.querySelector('#view').textContent, /Watch Lists/);
   assert.equal(document.querySelector('h1').textContent, 'TCGPlayer+');
 });
 
@@ -403,7 +422,7 @@ test('the header has a Clear price cache button, to the right of the title', asy
   assert.ok(top.compareDocumentPosition(document.querySelector('.tabs')) & 4, 'above the tabs');
 });
 
-test('Clear price cache removes trends and prices, and never saved lists or the order archive', async () => {
+test('Clear price cache removes trends and prices, and never watch lists or the order archive', async () => {
   const local = storageArea({
     lists: { version: 1, lists: [] }, orders: { orders: {} },
     'tr:1|english|near mint|holofoil': 1, 'tr:2': 1, 'ls:3|near mint|holofoil': 1,
@@ -512,6 +531,81 @@ test('a retry notice that arrives after the answer does not bring the "retrying"
   await settle(50);
   assert.equal(document.querySelector('.ptcg-now--retrying'), null);
   assert.equal(document.querySelector('#view').innerHTML, before);
+});
+
+
+// ---- the price trend on each order item ------------------------------------------
+
+const historyRequests = (site) => site.requests.filter((r) => /price\/history/.test(r.url));
+const trendOf = (document, name) => [...document.querySelectorAll('.oitem')].find((li) => li.textContent.includes(name)).querySelector('.oitem__trend .trend');
+
+test('each order item has a trend cell, saying it is checking, and nothing is fetched until it scrolls into view', async () => {
+  const site = fakeTcgplayer();
+  const bg = await startBackground(site);
+  const { document } = await openHome(bg, '#orders');
+  await until(() => document.querySelectorAll('.order').length === 6);
+  assert.equal(document.querySelectorAll('.oitem__trend .trend').length, 10);
+  assert.equal(trendOf(document, 'Lapras').querySelector('.trend__summary').textContent, 'Checking trend\u2026');
+  await settle(200);
+  assert.equal(historyRequests(site).length, 0, 'the totals do not need trends, so none are fetched yet');
+});
+
+test('a card that scrolls into view gets its trend: arrow, percent, sparkline, as on Watch Lists', async () => {
+  const site = fakeTcgplayer();
+  const bg = await startBackground(site);
+  const page = await openHome(bg, '#orders');
+  await until(() => page.document.querySelectorAll('.order').length === 6);
+  assert.equal(await page.reveal(), 10);
+  await until(() => !/trend--loading/.test(trendOf(page.document, 'Lapras').className), 12000);
+  const trend = trendOf(page.document, 'Lapras');
+  assert.match(trend.className, /trend--down/, 'the fixture feed is falling');
+  assert.match(trend.querySelector('.trend__summary').textContent, /^\u25BC \u221216%$/);
+  assert.equal(trend.querySelector('.trend__label').textContent, 'vs previous 7 days');
+  assert.ok(trend.querySelector('.sparkline'));
+  assert.ok(trend.querySelector('.trend__stat--sales'));
+  const requested = historyRequests(site).map((r) => r.url.match(/history\/(\d+)\//)[1]);
+  assert.equal(new Set(requested).size, requested.length, 'one request per distinct card');
+});
+
+test('a trend is asked for once, however many times its row is seen, and survives a redraw', async () => {
+  const site = fakeTcgplayer();
+  const bg = await startBackground(site);
+  const page = await openHome(bg, '#orders');
+  await until(() => page.document.querySelectorAll('.order').length === 6);
+  await page.reveal();
+  await until(() => !page.document.querySelector('.oitem__trend .trend--loading'), 12000);
+  const asked = historyRequests(site).length;
+
+  // Something changes in the archive, the orders are drawn again: the trends are not asked for again, nor flash back to "checking".
+  await bg.local.set({ orders: bg.local.data.orders });
+  await settle(100);
+  assert.equal(page.document.querySelector('.oitem__trend .trend--loading'), null, 'no flash back to checking');
+  assert.match(trendOf(page.document, 'Lapras').className, /trend--down/);
+  await page.reveal();
+  assert.equal(historyRequests(site).length, asked);
+});
+
+test('a trend TCGplayer is slow to give says it is retrying, then shows the trend', async () => {
+  const site = fakeTcgplayer({ failHistory: 1, random: 0.999 });
+  const bg = await startBackground(site);
+  const page = await openHome(bg, '#orders');
+  await until(() => page.document.querySelectorAll('.order').length === 6);
+  assert.equal(await page.reveal('.oitem[data-trend-key^="696683"]'), 1, 'just the Lapras row');
+  assert.ok(await waitUntil(() => page.document.querySelector('.oitem__trend .trend[data-retrying="1"]')), 'a trend says it is retrying');
+  assert.equal(page.document.querySelector('.oitem__trend .trend[data-retrying="1"] .trend__summary').textContent, 'Retrying (1 of 4)\u2026');
+  assert.ok(await waitUntil(() => !/trend--loading/.test(trendOf(page.document, 'Lapras').className), 12000));
+  assert.equal(page.document.querySelector('.oitem__trend [data-retrying]'), null);
+});
+
+test('a trend that cannot be had says so and the rest of the page is unaffected', async () => {
+  const site = fakeTcgplayer({ failHistory: 999 });
+  const bg = await startBackground(site);
+  const page = await openHome(bg, '#orders');
+  await until(() => page.document.querySelectorAll('.order').length === 6);
+  assert.equal(await page.reveal('.oitem[data-trend-key^="696683"]'), 1);
+  assert.ok(await waitUntil(() => /Trend unavailable/.test(trendOf(page.document, 'Lapras').textContent), 30000));
+  assert.ok(await waitUntil(() => !page.document.querySelector('.ptcg-now--loading'), 12000));
+  assert.match(page.document.querySelector('.ptcg-total').className, /ptcg-total--(higher|lower|same)/, 'the totals still work');
 });
 
 });

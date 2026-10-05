@@ -297,10 +297,25 @@ test('a trend that has arrived is drawn exactly as on the Watch Lists view', () 
   const trend = li.querySelector('.oitem__trend .trend');
   assert.match(trend.className, /trend--up/);
   assert.equal(trend.querySelector('.trend__summary').textContent, '\u25B2 +8.2%');
-  assert.equal(trend.querySelector('.trend__label').textContent, 'vs previous 7 days');
+  assert.equal(trend.querySelector('.trend__label').textContent, '7 days');
   assert.ok(trend.querySelector('.trend__stat--sales'), 'recent sales');
   assert.ok(trend.querySelector('.trend__stat--volatility'), 'volatility');
-  assert.ok(trend.querySelector('svg.sparkline, .sparkline'), 'the sparkline');
+  assert.equal(trend.querySelector('.sparkline'), null, 'no chart until a line is opened');
+});
+
+test('an order item\'s trend takes the chosen durations and opens its chart, by trend key', () => {
+  const key = trendKeyOf(orders[0].items[0]);
+  const calls = [];
+  const view = { durations: [7], expanded: { [key]: 7 }, onToggle: (k, days) => calls.push([k, days]) };
+  const d = doc();
+  const container = d.createElement('div');
+  d.body.append(container);
+  renderOrders(d, container, [orders[0]], {}, { [key]: TREND_UP }, view);
+  assert.ok(container.querySelector('.oitem__trend svg.sparkline'), 'opened');
+  container.querySelector('.oitem__trend button.trend__line').click();
+  assert.deepEqual(calls, [[key, 7]]);
+  assert.equal(updateOrderTrend(container, key, TREND_UP, { ...view, expanded: {} }), true);
+  assert.equal(container.querySelector('.oitem__trend svg.sparkline'), null, 'closed again');
 });
 
 test('a trend being retried says so', () => {

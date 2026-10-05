@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TCGPlayer+",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Watch TCGplayer products in your own lists with price trends, and see your order history with what each card would cost today.",
   "homepage_url": "https://github.com/stowns/tcgplayer-plus",
   "permissions": [
@@ -16,7 +16,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.tcgplayer.com/product/*"
+        "https://www.tcgplayer.com/*"
       ],
       "js": [
         "content/tcgplayerProduct.js"

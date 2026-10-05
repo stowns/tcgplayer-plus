@@ -12,7 +12,7 @@ import { createCache, singleFlight } from './lib/cache.js';
 import { createThrottle } from './lib/throttle.js';
 import { createClient } from './lib/httpClient.js';
 import { lookupTrend, trendCacheKey, TREND_CACHE_TTL_MS } from './lib/trendLookup.js';
-import { lookupListing, listingCacheKey, LISTING_CACHE_TTL_MS } from './lib/listingLookup.js';
+import { lookupListing, listingCacheKey } from './lib/listingLookup.js';
 import { api, onMessage } from './lib/runtime.js';
 
 const storage = api.storage.local;
@@ -96,18 +96,23 @@ const lookupTrendOnce = singleFlight((key, item) => untilDone('price-trend', key
   cache: trendCache,
 })));
 
-// --- TCGplayer current listing prices (order history) ----------------------
-
-const listingCache = createCache({
-  get: (keys) => storage.get(keys),
-  set: (items) => storage.set(items),
-  remove: (keys) => storage.remove(keys),
-}, { ttlMs: LISTING_CACHE_TTL_MS, prefix: 'ls:' });
+// --- TCGplayer current listing prices (the Ask) -----------------------------
+//
+// Never cached: a price target is only as good as the freshness of the price it is
+// compared with. Lookups of the same card that overlap still share one request.
 
 const lookupListingOnce = singleFlight((key, item) => untilDone('listing-price', key, lookupListing(item, {
   postJson: (url, body) => client.postJson(url, body, { onRetry: retryNotifier('listing-price', key) }),
-  cache: listingCache,
 })));
+
+// Storage written under the `ls:` prefix holds Asks that are no longer read; clear any that are there.
+Promise.resolve()
+  .then(() => storage.get(null))
+  .then((all) => {
+    const stale = Object.keys(all || {}).filter((key) => key.startsWith('ls:'));
+    return stale.length ? storage.remove(stale) : undefined;
+  })
+  .catch(() => {});
 
 // A click on the toolbar button goes straight to the dashboard, which opens on the tab you used last.
 api.action.onClicked.addListener(() => api.tabs.create({ url: api.runtime.getURL('home/home.html') }));

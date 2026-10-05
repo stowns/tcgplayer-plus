@@ -1,6 +1,6 @@
 {
   "name": "tcgplayer-plus",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Firefox and Chrome extension for TCGplayer: watch lists with price trends, and your order history with what each card would cost today.",
   "directories": {
     "test": "test"

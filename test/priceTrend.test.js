@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeBuckets, computeTrend, TREND, volatility, currentPrice, MIN_VOLATILITY_POINTS,
+  normalizeBuckets, computeTrend, TREND, volatility, currentPrice, MIN_VOLATILITY_POINTS, selectTrendLines, cleanDurations,
 } from '../src/lib/priceTrend.js';
 import { parseHistory } from '../src/lib/tcgplayerHistory.js';
 import { PIKACHU_HISTORY, GENESECT_HISTORY, historyRow } from './fixtures/tcgplayerHistory.js';
@@ -242,4 +242,90 @@ test('the current price falls back to the chart when the trend could not be call
 
 test('no current price without any sales', () => {
   for (const t of [null, undefined, {}, { latest: null, series: [] }, { series: [{ price: 0 }] }]) assert.equal(currentPrice(t), null);
+});
+
+// ---- several durations -------------------------------------------------------------
+
+/** Thirty days ending 30 Sep, newest first: today, yesterday, then steady. */
+const stepped = (today, yesterday, rest = [10, 6]) => normalizeBuckets(daily([today, yesterday, ...Array.from({ length: 28 }, () => rest)]));
+
+test('every duration on offer is worked out, each from its own two periods', () => {
+  assert.deepEqual(TREND.DURATIONS, [1, 3, 7, 14]);
+  assert.deepEqual(TREND.DEFAULT_DURATIONS, [7]);
+  const t = computeTrend(stepped([12, 6], [10, 6]));
+  assert.deepEqual(Object.keys(t.windows).map(Number), [1, 3, 7, 14]);
+  assert.equal(t.asOf, '2026-09-30', 'the day the periods are measured back from');
+  // 1 day: today 12 against yesterday 10.
+  assert.deepEqual([t.windows[1].direction, t.windows[1].pct, t.windows[1].windowDays], ['up', 0.2, 1]);
+  assert.deepEqual([t.windows[1].recent.days, t.windows[1].prior.days], [1, 1]);
+  // Longer periods are medians, so one day at 12 does not move them.
+  for (const n of [3, 7, 14]) assert.deepEqual([t.windows[n].direction, t.windows[n].pct, t.windows[n].reason], ['flat', 0, 'ok'], String(n));
+  assert.deepEqual([t.windows[14].recent.days, t.windows[14].prior.days], [14, 14]);
+});
+
+test('the headline fields are what they were: 7 days, or 14 for a quiet card', () => {
+  const t = computeTrend(pikachu());
+  assert.equal(t.windowDays, 7);
+  assert.equal(t.direction, t.windows[7].direction);
+  assert.equal(t.pct, t.windows[7].pct);
+  assert.deepEqual(t.recent, t.windows[7].recent);
+});
+
+test('a short period needs five sales and a sale on each of its days, up to three', () => {
+  // Four sales today: not enough for 1 day, however clear the move.
+  assert.equal(computeTrend(stepped([12, 4], [10, 6])).windows[1].reason, 'not-enough-sales');
+  assert.equal(computeTrend(stepped([12, 5], [10, 5])).windows[1].reason, 'ok');
+  // Nothing sold yesterday: nothing to compare today with.
+  const gap = computeTrend(stepped([12, 6], [10, 0]));
+  assert.equal(gap.windows[1].reason, 'not-enough-sales');
+  assert.equal(gap.windows[1].direction, 'unknown');
+  assert.equal(gap.windows[1].pct, null);
+  // 3 days needs all three; a missing day leaves two.
+  assert.equal(gap.windows[3].reason, 'not-enough-sales');
+  assert.equal(gap.windows[7].reason, 'ok', 'a week still has plenty');
+});
+
+test('a card with no sales has no windows to show', () => {
+  const none = computeTrend([]);
+  assert.equal(none.windows, undefined);
+  assert.deepEqual(selectTrendLines(none, [7, 1]), []);
+  assert.deepEqual(selectTrendLines(null, [7]), []);
+});
+
+test('the durations asked for are cleaned: known ones only, once each, longest first, never none', () => {
+  assert.deepEqual(cleanDurations([1, 7]), [7, 1]);
+  assert.deepEqual(cleanDurations(['3', 14, 14, 2, 'x', null]), [14, 3]);
+  for (const bad of [[], undefined, null, 'seven', [30, 0]]) assert.deepEqual(cleanDurations(bad), [7]);
+  assert.notEqual(cleanDurations(null), TREND.DEFAULT_DURATIONS, 'a copy, so nothing can change the default');
+});
+
+test('one line per chosen duration, longest first, and the first is the headline', () => {
+  const t = computeTrend(stepped([12, 6], [10, 6]));
+  const lines = selectTrendLines(t, [1, 7]);
+  assert.deepEqual(lines.map((l) => [l.days, l.shownDays, l.direction, l.headline]), [[7, 7, 'flat', true], [1, 1, 'up', false]]);
+  assert.equal(lines[1].pct, 0.2);
+  assert.deepEqual(selectTrendLines(t).map((l) => l.days), [7], 'seven days when nothing is chosen');
+  assert.deepEqual(selectTrendLines(t, [14, 7, 3, 1]).map((l) => l.days), [14, 7, 3, 1]);
+});
+
+test('a quiet card\'s 7 days widen to 14, unless 14 has a line of its own', () => {
+  // One sale every other day: 4 sale-days a week (too few sales), 7 a fortnight.
+  const quiet = computeTrend(normalizeBuckets(daily(Array.from({ length: 30 }, (_, i) => [10, i % 2 === 0 ? 1 : 0]))));
+  assert.equal(quiet.windows[7].reason, 'not-enough-sales');
+  assert.equal(quiet.windows[14].reason, 'ok');
+  const [alone] = selectTrendLines(quiet, [7]);
+  assert.deepEqual([alone.days, alone.shownDays, alone.reason], [7, 14, 'ok']);
+  const both = selectTrendLines(quiet, [14, 7]);
+  assert.deepEqual(both.map((l) => [l.days, l.shownDays, l.reason]), [[14, 14, 'ok'], [7, 7, 'not-enough-sales']]);
+  assert.deepEqual(selectTrendLines(quiet, [1]).map((l) => [l.shownDays, l.reason, l.direction]), [[1, 'not-enough-sales', 'unknown']]);
+});
+
+test('a trend made without windows still gives its headline line', () => {
+  const old = { direction: 'down', pct: -0.16, windowDays: 7, recent: { median: 1 }, prior: { median: 2 } };
+  assert.deepEqual(selectTrendLines(old, [1, 3]).map((l) => [l.days, l.shownDays, l.direction, l.headline]), [[7, 7, 'down', true]]);
+  assert.deepEqual(selectTrendLines({ direction: 'unknown', reason: 'unavailable' }, [7]), []);
+});
+
+test('the rules version changed with the windows, so cached trends are worked out again', () => {
+  assert.equal(TREND.VERSION, 3);
 });

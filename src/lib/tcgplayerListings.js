@@ -35,13 +35,34 @@ export function listingsBody(text, { size = 5 } = {}) {
   };
 }
 
+const PRODUCT_PAGE = 'https://www.tcgplayer.com/product';
+
+/**
+ * Where that one listing can be seen and bought: the product page, narrowed to
+ * its seller, condition, printing and language. The page's own first view shows
+ * a featured seller, not the cheapest, so the product's plain address would not
+ * show it. Empty when the listing does not say who is selling it.
+ */
+export function listingUrl(row) {
+  if (!row || !/^\d+$/.test(String(row.productId ?? '')) || !/^[A-Za-z0-9]{1,40}$/.test(String(row.sellerKey ?? ''))) return '';
+  const query = new URLSearchParams({ seller: row.sellerKey });
+  for (const [name, value] of [['Condition', row.condition], ['Printing', row.printing], ['Language', row.language]]) {
+    if (typeof value === 'string' && value.trim()) query.set(name, value.trim());
+  }
+  query.set('page', '1');
+  return `${PRODUCT_PAGE}/${row.productId}?${query}`;
+}
+
+/** Is this an address made by listingUrl? Checked again before it is put in a link. */
+export const isListingUrl = (url) => typeof url === 'string' && url.startsWith(`${PRODUCT_PAGE}/`) && /^https:\/\/www\.tcgplayer\.com\/product\/\d+\?seller=[A-Za-z0-9]+(&[A-Za-z]+=[^&#\s"'<>]*)*$/.test(url);
+
 const money = (value) => (Number.isFinite(value) && value > 0 ? Math.round(value * 100) / 100 : null);
 
 /**
  * The cheapest matching listing to actually buy (item plus shipping), or null
  * when nothing is for sale or the response is not what we expect. The price
  * reported is the item price alone, which is what an order history shows;
- * shipping is reported separately.
+ * shipping is reported separately, and `url` is where to see that listing.
  */
 export function parseLowestListing(json) {
   const rows = json && Array.isArray(json.results) && json.results[0] && json.results[0].results;
@@ -53,7 +74,7 @@ export function parseLowestListing(json) {
     const shipping = money(Number(row.shippingPrice)) ?? 0;
     const landed = price + shipping;
     if (!best || landed < best.landed || (landed === best.landed && price < best.price)) {
-      best = { price, shipping, seller: row.sellerName || '', landed };
+      best = { price, shipping, seller: row.sellerName || '', url: listingUrl(row), landed };
     }
   }
   if (!best) return null;

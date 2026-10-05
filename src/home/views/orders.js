@@ -15,6 +15,7 @@ import {
 import { api } from '../../lib/runtime.js';
 import { readOrders } from '../../lib/orderReader.js';
 import { retryingState, isSettled } from '../../lib/retryState.js';
+import { loadSettings, SETTINGS_KEY } from '../../lib/settings.js';
 
 const storage = api.storage.local;
 
@@ -33,7 +34,7 @@ function make(tag, props = {}, text) {
   return node;
 }
 
-/** @returns {() => void} unmount */
+/** @returns {{unmount: () => void, refresh: () => Promise<void>}} */
 export function mount(root) {
   const choices = rangeChoices(new Date().getFullYear());
   let range = choices.includes(remembered()) ? remembered() : DEFAULT_RANGE;
@@ -68,10 +69,19 @@ export function mount(root) {
   let mounted = true;
   let syncing = false;
   let syncOutcome = null;
-  let freshPrices = false;
   let shown = [];
   const results = {};
   const requested = new Set();
+  // Which durations each trend shows (a setting), and whose chart is open (by trend key; this visit only).
+  const trendView = {
+    durations: undefined,
+    expanded: {},
+    onToggle: (key, days) => {
+      if (trendView.expanded[key] === days) delete trendView.expanded[key];
+      else trendView.expanded[key] = days;
+      updateOrderTrend(container, key, trends[key] || null, trendView);
+    },
+  };
   const trends = {};            // trend key -> trend, kept so a redraw never flashes back to "checking"
   const trendRequested = new Set();
   let itemsByTrendKey = new Map();
@@ -87,20 +97,47 @@ export function mount(root) {
 
   // ---- today's prices --------------------------------------------------------------
   // Fetched for every item shown, newest order first, so the total above the list
-  // fills in without scrolling. The background paces them and caches each for 10 minutes; Refresh goes past the cache.
+  // fills in without scrolling. The background paces them; each is asked for afresh, never cached.
 
-  async function requestPrice(item, fresh = false) {
-    const key = itemKeyOf(item);
-    if (!item.productId || !Number.isFinite(item.paid) || requested.has(key)) return;
-    requested.add(key);
+  async function fetchPrice(key, item) {
     let result;
     try {
-      result = await api.runtime.sendMessage({ type: 'listing-price', ref: key, item: { productId: item.productId, condition: item.condition, fresh } });
+      result = await api.runtime.sendMessage({ type: 'listing-price', ref: key, item: { productId: item.productId, condition: item.condition } });
     } catch {
       result = null;
     }
     results[key] = result && result.status ? result : { status: 'unavailable' };
     if (mounted) updateResult(document, container, shown, key, results);
+  }
+
+  function requestPrice(item) {
+    const key = itemKeyOf(item);
+    if (!item.productId || !Number.isFinite(item.paid) || requested.has(key)) return;
+    requested.add(key);
+    fetchPrice(key, item);
+  }
+
+  /**
+   * Ask again for the price of every item shown (auto-refresh). The price on screen
+   * stays until the new one arrives. Orders themselves are not read again: they do not change.
+   */
+  let refreshing = false;
+  async function refreshPrices() {
+    if (!mounted || refreshing) return;
+    refreshing = true;
+    try {
+      const items = new Map();
+      for (const order of shown) {
+        for (const item of order.items) {
+          const key = itemKeyOf(item);
+          // Only what has already been answered: a first request still under way is left to finish.
+          if (item.productId && Number.isFinite(item.paid) && isSettled(results[key])) items.set(key, item);
+        }
+      }
+      await Promise.all([...items].map(([key, item]) => fetchPrice(key, item)));
+    } finally {
+      refreshing = false;
+    }
   }
 
   // ---- price trends ------------------------------------------------------------------
@@ -118,7 +155,7 @@ export function mount(root) {
       result = null;
     }
     trends[key] = result || { direction: 'unknown', pct: null, series: [], outliersHidden: 0, reason: 'unavailable' };
-    if (mounted) updateOrderTrend(container, key, trends[key]);
+    if (mounted) updateOrderTrend(container, key, trends[key], trendView);
   }
 
   const observer = new IntersectionObserver((entries) => {
@@ -141,7 +178,7 @@ export function mount(root) {
     } else if (message.kind === 'price-trend') {
       if (!trendRequested.has(message.ref) || isSettled(trends[message.ref])) return;
       trends[message.ref] = retryingState(message);
-      updateOrderTrend(container, message.ref, trends[message.ref]);
+      updateOrderTrend(container, message.ref, trends[message.ref], trendView);
     }
   };
   api.runtime.onMessage.addListener(onRetryNotice);
@@ -150,6 +187,7 @@ export function mount(root) {
 
   async function draw() {
     const archive = await loadArchive(storage);
+    trendView.durations = (await loadSettings(storage)).trendDurations;
     if (!mounted) return;
     const today = new Date().toISOString().slice(0, 10);
     shown = ordersInRange(archive, range, today);
@@ -159,8 +197,8 @@ export function mount(root) {
         syncOutcome && syncOutcome.status === 'signed-out' ? 'signed-out'
           : Object.keys(archive.orders).length ? 'empty-range' : 'empty', { range }));
     } else {
-      renderOrders(document, container, shown, results, trends);
-      for (const order of shown) order.items.forEach((item) => requestPrice(item, freshPrices));
+      renderOrders(document, container, shown, results, trends, trendView);
+      for (const order of shown) order.items.forEach((item) => requestPrice(item));
       itemsByTrendKey = new Map(shown.flatMap((o) => o.items).filter((i) => trendKeyOf(i)).map((i) => [trendKeyOf(i), i]));
       observer.disconnect();
       for (const li of container.querySelectorAll('.oitem[data-trend-key]')) {
@@ -214,15 +252,13 @@ export function mount(root) {
     if (range !== ALL_SAVED && archive) sync();
   });
 
-  // Refresh means "make it current": orders from TCGplayer, and today's prices past the cache.
+  // Refresh means "make it current": orders from TCGplayer, and today's prices and trends.
   refresh.addEventListener('click', async () => {
     requested.clear();
     for (const key of Object.keys(results)) delete results[key];
     trendRequested.clear();
     for (const key of Object.keys(trends)) delete trends[key];
-    freshPrices = true;
     await sync();
-    freshPrices = false;
   });
 
   clear.addEventListener('click', async () => {
@@ -236,7 +272,16 @@ export function mount(root) {
 
   // Orders saved by visiting TCGplayer's own page appear here without a refresh.
   const onChanged = (changes, area) => {
-    if (area === 'local' && changes[ORDERS_KEY]) draw();
+    if (area !== 'local') return;
+    if (changes[ORDERS_KEY]) draw();
+    // The durations to show were changed in Settings: redraw the trends, nothing else.
+    else if (changes[SETTINGS_KEY]) {
+      loadSettings(storage).then((settings) => {
+        if (!mounted || String(settings.trendDurations) === String(trendView.durations)) return;
+        trendView.durations = settings.trendDurations;
+        for (const key of Object.keys(trends)) updateOrderTrend(container, key, trends[key], trendView);
+      });
+    }
   };
   api.storage.onChanged.addListener(onChanged);
 
@@ -246,10 +291,13 @@ export function mount(root) {
     if (!Number.isFinite(last) || Date.now() - last > STALE_MS) sync();
   });
 
-  return () => {
-    mounted = false;
-    api.storage.onChanged.removeListener(onChanged);
-    api.runtime.onMessage.removeListener(onRetryNotice);
-    observer.disconnect();
+  return {
+    unmount: () => {
+      mounted = false;
+      api.storage.onChanged.removeListener(onChanged);
+      api.runtime.onMessage.removeListener(onRetryNotice);
+      observer.disconnect();
+    },
+    refresh: refreshPrices,
   };
 }

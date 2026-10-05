@@ -113,12 +113,15 @@ test('every attempt goes through the throttle, and the wait does not hold a slot
 
 test('with the real throttle, retries stay paced', async () => {
   const s = scripted(answer(503), answer(503), answer(200, {}));
-  const starts = [];
-  const fetch = async (...a) => { starts.push(Date.now()); return s.fetch(...a); };
-  const c = createClient({ fetch, throttle: createThrottle({ concurrency: 1, minIntervalMs: 30 }), retry: { sleep: async () => {}, random: () => 0 } });
+  // What the throttle asks to wait before each attempt, rather than the wall clock, so a busy machine cannot blur it.
+  const waits = [];
+  const throttle = createThrottle({ concurrency: 1, minIntervalMs: 30, sleep: (ms) => { waits.push(ms); return Promise.resolve(); } });
+  const c = createClient({ fetch: s.fetch, throttle, retry: { sleep: async () => {}, random: () => 0 } });
   await c.getJson('https://x/a');
-  assert.equal(starts.length, 3);
-  assert.ok(starts[1] - starts[0] >= 25 && starts[2] - starts[1] >= 25, 'a beat apart even with no backoff');
+  assert.equal(s.calls.length, 3);
+  assert.equal(waits.length, 3, 'every attempt went through the throttle');
+  assert.equal(waits[0], 0, 'the first goes at once');
+  assert.ok(waits[1] >= 25 && waits[2] >= 25, `a beat apart even with no backoff (${waits.join(', ')})`);
 });
 
 test('a response with no headers object is still handled', async () => {

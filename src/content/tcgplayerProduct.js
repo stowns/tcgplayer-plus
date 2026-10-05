@@ -100,8 +100,10 @@ function findFallback() {
 }
 
 /**
- * The page is a single-page app: the heading arrives after load, and moving to
- * another product never reloads the document. So watch for both.
+ * The site is a single-page app: the heading arrives after load, and moving from
+ * a search or another product to a product never reloads the document. So the
+ * script runs on every page of the site (see the manifest), watches for both,
+ * and does nothing until the address is a product's.
  */
 function sync() {
   if (location.href !== currentUrl) {

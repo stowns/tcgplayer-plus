@@ -11,9 +11,9 @@ import { PRODUCT_PAGE, PRODUCT_URL } from './fixtures/tcgplayer.js';
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
-async function load(initial = {}, page = PRODUCT_PAGE) {
+async function load(initial = {}, page = PRODUCT_PAGE, url = PRODUCT_URL) {
   const dom = new JSDOM(page, {
-    url: PRODUCT_URL, runScripts: 'outside-only', pretendToBeVisual: true,
+    url, runScripts: 'outside-only', pretendToBeVisual: true,
     virtualConsole: new VirtualConsole(),
   });
   const { window } = dom;
@@ -111,6 +111,38 @@ test('when the header turns up after the bar was used, the control moves beside 
   assert.ok(header.querySelector('.ptcg-list-control'), 'moved beside the name');
   assert.equal(document.querySelector('.ptcg-save-bar'), null, 'the empty bar is gone');
   assert.equal(document.querySelectorAll('.ptcg-list-control').length, 1);
+});
+
+// The site is one document: a search result opens a product without a reload.
+const SEARCH_URL = 'https://www.tcgplayer.com/search/pokemon/product?q=genesect';
+const SEARCH_PAGE = '<!doctype html><html><head><title>Search</title></head><body><div class="search-layout"><a href="/product/642621/x">Genesect ex</a></div></body></html>';
+const productBody = () => new JSDOM(PRODUCT_PAGE).window.document.body.innerHTML;
+
+test('arriving at a product from a search, without a reload, still gets the button', async () => {
+  const page = await load({}, SEARCH_PAGE, SEARCH_URL);
+  const { window, document } = page;
+  assert.equal(button(document), null, 'nothing on a page that is not a product');
+  assert.equal(document.querySelector('.ptcg-save-bar'), null);
+
+  window.history.pushState({}, '', PRODUCT_URL);
+  document.body.innerHTML = productBody();
+  await settle(80);
+  assert.ok(document.querySelector('.product-details__header .ptcg-list-control'), 'beside the name');
+  assert.equal(document.querySelectorAll('.ptcg-list-control').length, 1);
+
+  // And it saves this product.
+  button(document).click();
+  const name = document.querySelector('.ptcg-list-panel input[type="text"]');
+  name.value = 'Watching';
+  name.closest('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await settle(60);
+  assert.equal(page.data.lists.lists[0].items[0].productId, '642621');
+
+  // Back to the search: the button goes with the product.
+  window.history.pushState({}, '', SEARCH_URL);
+  document.body.innerHTML = '<div class="search-layout"></div>';
+  await settle(80);
+  assert.equal(button(document), null);
 });
 
 test('creating a list from the panel saves the card into it', async () => {

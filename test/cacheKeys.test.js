@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { cachedLookupKeys, clearCachedLookups, CACHE_PREFIXES } from '../src/lib/cacheKeys.js';
 
 test('"Clear cache" removes price lookups and never the watch lists or the order archive', () => {
-  const keys = ['lists', 'orders', 'tr:1', 'ls:2', 'settings', 'ptcg.lastView'];
-  assert.deepEqual(cachedLookupKeys(keys), ['tr:1', 'ls:2']);
-  assert.deepEqual(CACHE_PREFIXES, ['tr:', 'ls:']);
+  const keys = ['lists', 'orders', 'targets', 'tr:1', 'tr:2|english', 'settings', 'ptcg.lastView'];
+  assert.deepEqual(cachedLookupKeys(keys), ['tr:1', 'tr:2|english']);
+  assert.deepEqual(CACHE_PREFIXES, ['tr:'], 'only trends are cached; the Ask never is');
 });
 
 test('cachedLookupKeys tolerates junk', () => {
@@ -23,9 +23,9 @@ function memoryStorage(initial) {
 }
 
 test('clearCachedLookups removes only cached lookups and says how many', async () => {
-  const storage = memoryStorage({ lists: {}, orders: {}, 'tr:1': 1, 'tr:2': 1, 'ls:3': 1 });
-  assert.equal(await clearCachedLookups(storage), 3);
-  assert.deepEqual(Object.keys(storage.data).sort(), ['lists', 'orders']);
+  const storage = memoryStorage({ lists: {}, orders: {}, targets: {}, settings: {}, 'tr:1': 1, 'tr:2': 1 });
+  assert.equal(await clearCachedLookups(storage), 2);
+  assert.deepEqual(Object.keys(storage.data).sort(), ['lists', 'orders', 'settings', 'targets'], 'targets and settings are never touched');
 });
 
 test('clearCachedLookups with nothing cached removes nothing, and does not call remove', async () => {

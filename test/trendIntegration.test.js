@@ -72,10 +72,10 @@ async function startBackground({ failFeeds = false, failFirst = 0, random = 0 } 
   return { requested, local, send: bus.send, pageRuntime: bus.pageRuntime };
 }
 
-async function startListsPage(background) {
+async function startListsPage(background, { settings, hash = '#lists' } = {}) {
   const html = await readFile('src/home/home.html', 'utf8');
   const dom = new JSDOM(html, {
-    url: 'moz-extension://test/home/home.html#lists', runScripts: 'outside-only', virtualConsole: new VirtualConsole(),
+    url: `moz-extension://test/home/home.html${hash}`, runScripts: 'outside-only', virtualConsole: new VirtualConsole(),
   });
   const { window } = dom;
   const observed = [];
@@ -91,17 +91,28 @@ async function startListsPage(background) {
   window.IntersectionObserver = class extends Original {
     constructor(cb) { super(cb); instances.push(this); }
   };
+  // Storage that tells its listeners what changed, as the browser's does.
+  const local = storageArea({ lists: LISTS, ...(settings ? { settings } : {}) });
+  const listeners = new Set();
+  const quietSet = local.set.bind(local);
+  local.set = async (items) => {
+    await quietSet(items);
+    const changes = Object.fromEntries(Object.entries(items).map(([k, newValue]) => [k, { newValue }]));
+    for (const fn of [...listeners]) fn(changes, 'local');
+  };
   window[apiName()] = {
     storage: {
-      local: storageArea({ lists: LISTS }),
-      onChanged: { addListener: () => {}, removeListener: () => {} },
+      local,
+      onChanged: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
     },
     runtime: background.pageRuntime(),
   };
   window.eval(await readFile(dist('home/home.js'), 'utf8'));
   await settle();
   return {
+    window,
     document: window.document,
+    local,
     observed,
     reveal: async (index) => { instances[0].show(observed[index]); await settle(400); },
   };
@@ -130,8 +141,9 @@ test('scrolling an item into view fetches TCGplayer and shows its trend and char
   const trend = trendOf(page.document, 'Pikachu ex');
   assert.match(trend.className, /trend--down/);
   assert.match(trend.querySelector('.trend__summary').textContent, /^▼ −16%$/);
-  assert.match(trend.querySelector('.trend__label').textContent, /vs previous 7 days/);
-  assert.ok(trend.querySelector('svg.sparkline path'), 'the sparkline is drawn');
+  assert.equal(trend.querySelector('.trend__label').textContent, '7 days');
+  assert.equal(trend.querySelectorAll('.trend__line').length, 1, 'one line, for 7 days, until more are chosen');
+  assert.equal(trend.querySelector('svg.sparkline'), null, 'no chart until the line is clicked');
 
   // The other item is still waiting: it has not been scrolled to.
   assert.match(trendOf(page.document, 'Genesect ex').className, /trend--loading/);
@@ -144,8 +156,77 @@ test('a quiet card widens its window and reads flat', async () => {
   await page.reveal(1); // Genesect
   const trend = trendOf(page.document, 'Genesect ex');
   assert.match(trend.className, /trend--flat/);
-  assert.match(trend.querySelector('.trend__summary').textContent, /^▬ Flat \(−0\.5%\)$/);
-  assert.match(trend.querySelector('.trend__label').textContent, /vs previous 14 days/);
+  assert.match(trend.querySelector('.trend__summary').textContent, /^▬ −0\.5%$/);
+  assert.equal(trend.querySelector('.trend__label').textContent, '14 days');
+});
+
+test('clicking a trend opens its chart with the two periods shaded, and clicking again closes it', async () => {
+  const bg = await startBackground();
+  const page = await startListsPage(bg);
+  await page.reveal(0);
+  const trend = () => trendOf(page.document, 'Pikachu ex');
+  trend().querySelector('button.trend__line').click();
+  await settle();
+  const line = trend().querySelector('button.trend__line');
+  assert.equal(line.getAttribute('aria-expanded'), 'true');
+  assert.ok(trend().querySelector('.trend__chart--down svg.sparkline path'), 'the chart, in the line\'s colour');
+  assert.deepEqual([...trend().querySelectorAll('.sparkline__band')].map((b) => b.getAttribute('class').split('--')[1]), ['prior', 'recent']);
+  assert.match(trend().querySelector('svg.sparkline').getAttribute('aria-label'), /Shaded: the last 7 days, and the 7 before/);
+  assert.equal(bg.requested.length, 1, 'opening a chart asks TCGplayer nothing');
+
+  line.click();
+  await settle();
+  assert.equal(trend().querySelector('svg.sparkline'), null);
+  assert.equal(trend().querySelector('button.trend__line').getAttribute('aria-expanded'), 'false');
+});
+
+test('the durations chosen in Settings each get a line, longest first, without asking TCGplayer again', async () => {
+  const bg = await startBackground();
+  const page = await startListsPage(bg, { settings: { trendDurations: [1, 7] } });
+  await page.reveal(0);
+  const trend = () => trendOf(page.document, 'Pikachu ex');
+  assert.deepEqual([...trend().querySelectorAll('.trend__line')].map((l) => l.getAttribute('data-days')), ['7', '1']);
+  assert.match(trend().querySelectorAll('.trend__line')[1].textContent, /1 day/);
+  trend().querySelector('button.trend__line').click();
+  await settle();
+  assert.ok(trend().querySelector('svg.sparkline'));
+
+  // Changed while the list is open (as the Settings tab in another dashboard would).
+  await page.local.set({ settings: { trendDurations: [14, 3] } });
+  await settle(80);
+  assert.deepEqual([...trend().querySelectorAll('.trend__line')].map((l) => l.getAttribute('data-days')), ['14', '3']);
+  assert.equal(trend().querySelector('svg.sparkline'), null, 'the open chart was for a line that is gone');
+  assert.equal(bg.requested.length, 1, 'every duration comes from the one history already fetched');
+});
+
+test('a trend cached under the old rules is worked out again, with its durations', async () => {
+  const bg = await startBackground();
+  const key = 'tr:712953|english|near mint|holofoil';
+  bg.local.data[key] = { storedAt: Date.now(), value: { direction: 'up', pct: 0.5, windowDays: 7, rules: 2, series: [] } };
+  const fresh = await bg.send({ type: 'price-trend', item: { productId: '712953', language: 'English', condition: 'Near Mint Holofoil' } });
+  assert.equal(bg.requested.length, 1, 'fetched, not served from the old entry');
+  assert.equal(fresh.direction, 'down');
+  assert.deepEqual(Object.keys(fresh.windows).map(Number), [1, 3, 7, 14]);
+});
+
+test('the Settings tab chooses the durations, and keeps at least one', async () => {
+  const bg = await startBackground();
+  const page = await startListsPage(bg, { hash: '#settings' });
+  const box = (days) => page.document.querySelector(`.settings-trends__box[value="${days}"]`);
+  const tick = async (days, on) => { box(days).checked = on; box(days).dispatchEvent(new page.window.Event('change', { bubbles: true })); await settle(60); };
+  assert.equal(page.document.querySelector('.settings-trends h3').textContent, 'Price trends');
+  assert.deepEqual([1, 3, 7, 14].map((d) => box(d).checked), [false, false, true, false], '7 days to begin with');
+
+  await tick(1, true);
+  assert.equal(String(page.local.data.settings.trendDurations), '7,1');
+  await tick(7, false);
+  assert.equal(String(page.local.data.settings.trendDurations), '1');
+  await tick(1, false);
+  assert.equal(String(page.local.data.settings.trendDurations), '1', 'the last one cannot be switched off');
+  assert.equal(box(1).checked, true, 'and the box says so');
+  assert.equal(page.document.querySelector('.settings-trends__status').textContent, 'At least one trend is always shown.');
+  await tick(3, true);
+  assert.equal(page.document.querySelector('.settings-trends__status').textContent, '');
 });
 
 test('the answer is cached, so the same card costs one request', async () => {

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderLists, exportJson, itemSubtitle, priceSummary, askSummary, renderAsk, updateAsk } from '../src/lib/listsPageView.js';
 import { emptyState, createList, addItem, setListSort } from '../src/lib/lists.js';
+import { computeTrend, normalizeBuckets } from '../src/lib/priceTrend.js';
+import { PIKACHU_HISTORY } from './fixtures/tcgplayerHistory.js';
 import { askKey } from '../src/lib/listsSort.js';
 
 const doc = () => new JSDOM('<body><div id="lists"></div></body>').window.document;
@@ -99,7 +101,7 @@ test('exportJson produces readable, re-importable data', () => {
 });
 
 // ---- price trend -----------------------------------------------------------
-import { formatChange, trendSummary, trendTooltip, renderTrend, updateTrend } from '../src/lib/listsPageView.js';
+import { formatChange, trendSummary, trendTooltip, renderTrend, updateTrend, trendOptionsFor } from '../src/lib/listsPageView.js';
 
 const DOWN = {
   direction: 'down', pct: -0.1589, windowDays: 7, reason: 'ok',
@@ -124,7 +126,7 @@ test('formatChange shows a signed percentage, finer for small moves', () => {
 test('trendSummary is what the cell says, per state', () => {
   assert.equal(trendSummary(DOWN), '▼ −16%');
   assert.equal(trendSummary(UP), '▲ +20%');
-  assert.equal(trendSummary(FLAT), '▬ Flat (−0.5%)');
+  assert.equal(trendSummary(FLAT), '▬ −0.5%', 'the bar says flat, as the arrows say up and down');
   assert.equal(trendSummary(THIN), 'Not enough recent sales');
   assert.equal(trendSummary(GONE), 'Trend unavailable');
 });
@@ -144,13 +146,19 @@ test('renderTrend gives each state a class, an accessible name, and only draws a
   const d = doc();
   const down = renderTrend(d, DOWN);
   assert.match(down.className, /trend--down/);
-  assert.match(down.getAttribute('aria-label'), /trending down 16% over the last 7 days/i);
-  assert.ok(down.querySelector('svg.sparkline'));
-  assert.match(down.querySelector('.trend__label').textContent, /vs previous 7 days/);
+  const line = down.querySelector('button.trend__line');
+  assert.match(line.className, /trend__line--down/);
+  assert.match(line.getAttribute('aria-label'), /trending down 16% over the last 7 days\. Show the chart/i);
+  assert.equal(line.getAttribute('aria-expanded'), 'false');
+  assert.equal(down.querySelector('svg.sparkline'), null, 'no chart until a line is opened');
+  assert.equal(down.querySelector('.trend__label').textContent, '7 days');
+  assert.ok(renderTrend(d, DOWN, { expanded: 7 }).querySelector('svg.sparkline'));
 
   assert.match(renderTrend(d, UP).className, /trend--up/);
   assert.match(renderTrend(d, FLAT).className, /trend--flat/);
-  assert.equal(renderTrend(d, FLAT).querySelector('.trend__label').textContent, 'vs previous 14 days');
+  assert.equal(renderTrend(d, FLAT).querySelector('.trend__label').textContent, '14 days');
+  assert.equal(renderTrend(d, FLAT).querySelector('.trend__summary').textContent, '▬ −0.5%');
+  assert.match(renderTrend(d, FLAT).querySelector('.trend__line').getAttribute('aria-label'), /^Price flat over the last 14 days/, 'still said in words to a screen reader');
 
   const thin = renderTrend(d, THIN);
   assert.match(thin.className, /trend--unknown/);
@@ -169,9 +177,10 @@ test('rising is green and falling is red, from the shared tokens, and flat is ne
   const css = await readFile('src/home/lists.css', 'utf8');
   const home = await readFile('src/home/home.css', 'utf8');
   const colour = (selector) => (css.match(new RegExp(`\\.${selector}[^{]*\\{([^}]*)\\}`)) || [])[1]?.match(/(?:^|;|\s)color:\s*([^;]+)/)?.[1].trim();
-  assert.equal(colour('trend--up'), 'var(--gain)');
-  assert.equal(colour('trend--down'), 'var(--loss)');
-  assert.equal(colour('trend--flat'), undefined, 'flat keeps the soft grey of .trend');
+  assert.equal(colour('trend__line--up'), 'var(--gain)');
+  assert.equal(colour('trend__line--down'), 'var(--loss)');
+  assert.equal(colour('trend__line--flat'), undefined, 'flat keeps the soft grey of the line');
+  assert.match(css, /\.trend__line--up \.trend__summary, \.trend__chart--up \{/, 'an open chart takes its line\'s colour');
   // The tokens exist for light and dark, and are different colours.
   const tokens = [...home.matchAll(/--(gain|loss):\s*(#[0-9a-f]{6})/gi)].map((m) => [m[1], m[2]]);
   assert.equal(tokens.length, 4, 'gain and loss, in light and in dark');
@@ -268,7 +277,7 @@ test('an ordinary trend carries no note', () => {
 });
 
 test('the screen-reader label includes the reversal', () => {
-  assert.match(renderTrend(doc(), FADED_SPIKE).getAttribute('aria-label'), /but falling in the last 3 days/);
+  assert.match(renderTrend(doc(), FADED_SPIKE).querySelector('.trend__line').getAttribute('aria-label'), /over the last 7 days, but falling in the last 3 days\. Show the chart/);
 });
 
 test('an item saved with no picture still shows one', () => {
@@ -295,6 +304,8 @@ test('a trend shows recent sales (not TCGplayer\'s Market Price) and volatility'
   const el = renderTrend(doc(), { direction: 'flat', pct: 0, windowDays: 7, recent: { median: 10.5, sales: 9 }, prior: { median: 10.5, sales: 9 },
     latest: { median: 10.5, days: 3 }, turning: null, series, outliersHidden: 0, reason: 'ok', sku: null });
   assert.equal(el.querySelector('.trend__stat--sales').textContent, 'Recent sales $10.50');
+  assert.equal(el.querySelector('.trend__stat--sales').nextElementSibling.textContent, 'before shipping', 'so it is not compared with Ask, which includes it');
+  assert.match(el.querySelector('.trend__stat--sales').getAttribute('title'), /before shipping\. Ask and price targets include shipping/);
   assert.equal(el.querySelector('.trend__stat--market'), null, 'it is not called Market: that is TCGplayer\'s own figure');
   assert.match(el.querySelector('.trend__stat--volatility').textContent, /^±9\.6% a day$/);
 });
@@ -687,4 +698,322 @@ test('sorting by volatility or ask does not break on a card still being retried'
     renderLists(d, d.getElementById('lists'), setListSort(state, w, { key, dir: 'desc' }), {}, trends, asks, { selectedId: w });
     assert.equal(d.querySelectorAll('.item').length, 3);
   }
+});
+
+// ---- price targets ---------------------------------------------------------------
+import { renderTargetBlock, updateTargetBlock } from '../src/lib/listsPageView.js';
+
+const TARGET = { price: 10, direction: 'below', notify: true, met: false, pending: false, updatedAt: '', notifiedAt: '' };
+const SAVED = { ...ITEM, key: '642621:english' };
+const block = (extras, handlers) => renderTargetBlock(doc(), SAVED, extras, handlers);
+const change = (node, type = 'change') => node.dispatchEvent(new (node.ownerDocument.defaultView.Event)(type, { bubbles: true }));
+
+test('an item with no target offers to set one: a small button beside the item, above Remove', () => {
+  const calls = [];
+  const d = doc();
+  const { state } = populated();
+  const container = d.getElementById('lists');
+  const handlers = { onEditTarget: (k) => calls.push(k) };
+  renderLists(d, container, state, handlers, {}, {}, { targets: {}, autoRefreshOn: true });
+  const row = container.querySelector('.item');
+  const item = state.lists[0].items[0];
+  assert.deepEqual([...row.querySelector('.item__side').children].map((n) => n.textContent), ['Set price target', 'Remove']);
+  const set = row.querySelector('.item__target-set');
+  assert.equal(set.hidden, false);
+  assert.ok(set.classList.contains('secondary'));
+  assert.equal(set.getAttribute('aria-label'), `Set a price target for ${item.name}`);
+  assert.equal(row.querySelector('.item__target').childNodes.length, 0, 'nothing in the item itself until a target exists');
+  set.click();
+  assert.deepEqual(calls, [item.key]);
+
+  // Not offered while its form is open, or once a target is set; offered again when removed.
+  updateTargetBlock(container, item, { targets: {}, editing: { key: item.key }, autoRefreshOn: true }, handlers);
+  assert.equal(row.querySelector('.item__target-set').hidden, true);
+  assert.ok(row.querySelector('form.target-form'));
+  updateTargetBlock(container, item, { targets: { [item.key]: TARGET }, autoRefreshOn: true }, handlers);
+  assert.equal(row.querySelector('.item__target-set').hidden, true);
+  updateTargetBlock(container, item, { targets: {}, autoRefreshOn: true }, handlers);
+  assert.equal(row.querySelector('.item__target-set').hidden, false);
+
+  renderLists(d, container, state, handlers, {}, {}, { targets: { [item.key]: TARGET }, autoRefreshOn: true });
+  assert.equal(container.querySelector('.item__target-set').hidden, true, 'drawn hidden when a target already exists');
+  renderLists(d, container, state, handlers);
+  assert.equal(container.querySelector('.item__target-set'), null, 'not there at all when targets are not tracked');
+  assert.equal(container.querySelector('.item__side').textContent, 'Remove');
+});
+
+test('a target that is set is shown with its direction, its price, whether it notifies, and Edit', () => {
+  const calls = [];
+  const b = block({ targets: { '642621:english': TARGET }, autoRefreshOn: true }, { onEditTarget: (k) => calls.push(k) });
+  assert.equal(b.querySelector('.item__target-text').textContent, 'Target: at or below $10.00');
+  assert.equal(b.querySelector('.item__target-notify').textContent, 'notifications on');
+  assert.equal(b.querySelector('.item__target-how').textContent, 'how to receive them');
+  assert.equal(b.querySelector('.item__target-how').getAttribute('href'), '#settings');
+  assert.equal(b.querySelector('.item__target-met'), null);
+  assert.equal(b.querySelector('.item__target-paused'), null);
+  b.querySelector('.item__target-edit').click();
+  assert.deepEqual(calls, ['642621:english']);
+  const above = block({ targets: { '642621:english': { ...TARGET, direction: 'above', price: 55.5, notify: false } }, autoRefreshOn: true });
+  assert.equal(above.querySelector('.item__target-text').textContent, 'Target: at or above $55.50');
+  assert.equal(above.querySelector('.item__target-notify').textContent, 'notifications off');
+  assert.equal(above.querySelector('.item__target-how'), null, 'nothing to receive');
+});
+
+test('a target that is met says so', () => {
+  const b = block({ targets: { '642621:english': { ...TARGET, met: true } }, autoRefreshOn: true });
+  assert.equal(b.querySelector('.item__target-met').textContent, 'Target met');
+});
+
+test('a target that wants notifications while auto-refresh is off says it is not being checked', () => {
+  const off = block({ targets: { '642621:english': TARGET }, autoRefreshOn: false });
+  assert.match(off.querySelector('.item__target-paused').textContent, /not being checked: auto-refresh is off/);
+  const quiet = block({ targets: { '642621:english': { ...TARGET, notify: false } }, autoRefreshOn: false });
+  assert.equal(quiet.querySelector('.item__target-paused'), null, 'nothing was promised, so nothing is missing');
+});
+
+test('the form for a new target: at or below, empty price, notifications on', () => {
+  const b = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: true });
+  const form = b.querySelector('form.target-form');
+  assert.deepEqual([...form.querySelectorAll('.target-form__direction option')].map((o) => [o.value, o.textContent]), [['below', 'At or below'], ['above', 'At or above']]);
+  assert.equal(form.querySelector('.target-form__direction').value, 'below');
+  assert.equal(form.querySelector('.target-form__price').value, '');
+  assert.equal(form.querySelector('.target-form__notify').checked, true);
+  assert.equal(form.querySelector('.target-form__remove'), null, 'nothing to remove yet');
+  assert.deepEqual([...form.querySelectorAll('button')].map((x) => x.textContent), ['Save', 'Cancel', 'Enable auto-refresh']);
+});
+
+test('the form asks for a secret word only when notifications are wanted and there is no topic yet', () => {
+  const drafts = [];
+  const without = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: true, hasTopic: false }, { onTargetDraft: (k, d) => drafts.push(d) });
+  const setup = without.querySelector('.target-form__setup');
+  assert.equal(setup.hidden, false);
+  assert.match(setup.textContent, /Secret word for your notifications .*Use 3 to 24 letters or digits/);
+  const word = without.querySelector('.target-form__word');
+  assert.equal(word.maxLength, 24);
+  word.value = 'lapras';
+  word.dispatchEvent(new word.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  assert.equal(drafts.at(-1).word, 'lapras');
+  const notify = without.querySelector('.target-form__notify');
+  notify.checked = false;
+  notify.dispatchEvent(new word.ownerDocument.defaultView.Event('change', { bubbles: true }));
+  assert.equal(setup.hidden, true, 'no notifications, no word');
+
+  const kept = block({ targets: {}, editing: { key: '642621:english', draft: { direction: 'below', price: '5', notify: true, word: 'eevee' } }, autoRefreshOn: true, hasTopic: false });
+  assert.equal(kept.querySelector('.target-form__word').value, 'eevee', 'a redraw puts back what was typed');
+
+  for (const extras of [{ hasTopic: true }, {}]) {
+    const b = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: true, ...extras });
+    assert.equal(b.querySelector('.target-form__setup').hidden, true);
+  }
+});
+
+test('the form for an existing target starts from it and can remove it', () => {
+  const calls = [];
+  const b = block(
+    { targets: { '642621:english': { ...TARGET, direction: 'above', price: 42.5, notify: false } }, editing: { key: '642621:english' }, autoRefreshOn: true },
+    { onRemoveTarget: (k) => calls.push(['remove', k]), onCancelTarget: (k) => calls.push(['cancel', k]) },
+  );
+  assert.equal(b.querySelector('.target-form__direction').value, 'above');
+  assert.equal(b.querySelector('.target-form__price').value, '42.5');
+  assert.equal(b.querySelector('.target-form__notify').checked, false);
+  b.querySelector('.target-form__remove').click();
+  b.querySelector('.target-form__cancel').click();
+  assert.deepEqual(calls, [['remove', '642621:english'], ['cancel', '642621:english']]);
+});
+
+test('saving hands over what was entered, and does not reload the page', () => {
+  const saved = [];
+  const b = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: true }, { onSaveTarget: (k, d) => saved.push([k, d]) });
+  const form = b.querySelector('form');
+  form.querySelector('.target-form__direction').value = 'above';
+  form.querySelector('.target-form__price').value = '12.50';
+  form.querySelector('.target-form__notify').checked = false;
+  const event = new (form.ownerDocument.defaultView.Event)('submit', { cancelable: true });
+  form.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(saved, [['642621:english', { direction: 'above', price: '12.50', notify: false, word: '' }]]);
+});
+
+test('what is typed is reported as it changes, so a redraw can put it back', () => {
+  const drafts = [];
+  const b = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: true }, { onTargetDraft: (k, d) => drafts.push(d) });
+  const price = b.querySelector('.target-form__price');
+  price.value = '9';
+  change(price, 'input');
+  assert.deepEqual(drafts.at(-1), { direction: 'below', price: '9', notify: true, word: '' });
+  const again = block({ targets: {}, editing: { key: '642621:english', draft: drafts.at(-1) }, autoRefreshOn: true });
+  assert.equal(again.querySelector('.target-form__price').value, '9', 'the draft is restored');
+});
+
+test('with auto-refresh off, turning notifications on warns that tracking needs it, with a button to enable it', () => {
+  let enabled = 0;
+  const b = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: false }, { onEnableAutoRefresh: () => { enabled += 1; } });
+  const alert = b.querySelector('.target-form__alert');
+  assert.equal(alert.hidden, false, 'notifications are on by default, so it shows at once');
+  assert.match(alert.textContent, /runs in your browser while this dashboard is open, and needs auto-refresh/);
+  assert.equal(alert.getAttribute('role'), 'alert');
+  const notify = b.querySelector('.target-form__notify');
+  notify.checked = false;
+  change(notify);
+  assert.equal(alert.hidden, true, 'no notifications wanted, nothing to warn about');
+  notify.checked = true;
+  change(notify);
+  assert.equal(alert.hidden, false);
+  alert.querySelector('.target-form__enable').click();
+  assert.equal(enabled, 1);
+});
+
+test('with auto-refresh on there is no warning', () => {
+  const b = block({ targets: {}, editing: { key: '642621:english' }, autoRefreshOn: true });
+  assert.equal(b.querySelector('.target-form__alert').hidden, true);
+});
+
+test('a refused price is shown in the form', () => {
+  const b = block({ targets: {}, editing: { key: '642621:english', draft: { direction: 'below', price: 'cheap', notify: true }, error: 'Enter a price above zero, such as 12.50' }, autoRefreshOn: true });
+  assert.equal(b.querySelector('.target-form__error').textContent, 'Enter a price above zero, such as 12.50');
+  assert.equal(b.querySelector('.target-form__price').value, 'cheap', 'what was typed is still there to correct');
+});
+
+test('only the item being edited shows the form', () => {
+  const b = block({ targets: {}, editing: { key: 'some-other:english' }, autoRefreshOn: true });
+  assert.equal(b.querySelector('form'), null);
+  assert.equal(b.childNodes.length, 0);
+});
+
+test('the list shows a target part on each item only when targets are being tracked', () => {
+  const d = doc();
+  const { state } = populated();
+  renderLists(d, d.getElementById('lists'), state, {});
+  assert.equal(d.querySelector('.item__target'), null, 'as before when no targets are passed');
+  renderLists(d, d.getElementById('lists'), state, {}, {}, {}, { targets: {}, autoRefreshOn: false });
+  assert.equal(d.querySelectorAll('.item .item__target').length, 1);
+  renderLists(d, d.getElementById('lists'), state, {}, {}, {}, { targets: { '642621:english': { ...TARGET, met: true } }, autoRefreshOn: true });
+  assert.equal(d.querySelector('.item__target-met').textContent, 'Target met');
+});
+
+test('updateTargetBlock redraws just the target part of that product\'s rows', () => {
+  const d = doc();
+  const { state } = populated();
+  const container = d.getElementById('lists');
+  renderLists(d, container, state, {}, {}, {}, { targets: {}, autoRefreshOn: true });
+  const row = container.querySelector('.item');
+  const item = state.lists[0].items[0];
+  assert.equal(updateTargetBlock(container, item, { targets: { [item.key]: TARGET }, autoRefreshOn: true }, {}), true);
+  assert.equal(container.querySelector('.item'), row, 'the row is the same element');
+  assert.equal(container.querySelector('.item__target-text').textContent, 'Target: at or below $10.00');
+  assert.equal(container.querySelectorAll('.item__target').length, 1, 'replaced, not added');
+  assert.equal(updateTargetBlock(container, { key: 'nope:english' }, { targets: {} }, {}), false);
+});
+
+test('nothing in a target is treated as markup', () => {
+  const b = renderTargetBlock(doc(), { ...ITEM, key: '642621:english', name: '<img src=x onerror=alert(1)>' }, { targets: {}, editing: { key: '642621:english', error: '<b>x</b>' }, autoRefreshOn: true });
+  assert.equal(b.querySelector('img'), null);
+  assert.equal(b.querySelector('b'), null);
+});
+
+test('the export carries the targets, when there are any', () => {
+  const { state } = populated();
+  assert.equal('targets' in JSON.parse(exportJson(state)), false);
+  assert.equal('targets' in JSON.parse(exportJson(state, {})), false);
+  const parsed = JSON.parse(exportJson(state, { '642621:english': TARGET }));
+  assert.equal(parsed.targets['642621:english'].price, 10);
+  assert.equal(parsed.lists.length, 1, 'the lists are still there');
+});
+
+test('the Ask links to the listing it describes, in a new tab', () => {
+  const url = 'https://www.tcgplayer.com/product/535952?seller=d8035033&Condition=Near+Mint&Printing=Holofoil&Language=English&page=1';
+  const node = renderAsk(doc(), { ...okAsk(10, 1.49), seller: 'Shop', url });
+  assert.equal(node.textContent, 'Ask $11.49 ($10.00 + $1.49 shipping) \u00B7 view listing');
+  const link = node.querySelector('a.item__ask-link');
+  assert.equal(link.href, url);
+  assert.equal(link.target, '_blank');
+  assert.match(link.rel, /noopener/);
+  assert.match(link.getAttribute('title'), /sold by Shop/);
+});
+
+test('no link when the listing has no address, or one that is not a TCGplayer listing', () => {
+  for (const url of [undefined, '', 'javascript:alert(1)', 'https://evil.example/product/1?seller=a']) {
+    const node = renderAsk(doc(), { ...okAsk(10, 1.49), url });
+    assert.equal(node.querySelector('a'), null, String(url));
+    assert.equal(node.textContent, 'Ask $11.49 ($10.00 + $1.49 shipping)');
+  }
+  assert.equal(renderAsk(doc(), { status: 'none', url: 'https://www.tcgplayer.com/product/535952?seller=d8035033&Condition=Near+Mint&Printing=Holofoil&Language=English&page=1' }).querySelector('a'), null, 'nothing listed, nothing to link');
+});
+
+// ---- several durations, and the chart on request ------------------------------------------
+
+const REAL = { ...computeTrend(normalizeBuckets(PIKACHU_HISTORY.result[0].buckets)), sku: { condition: 'Near Mint', variant: 'Holofoil' } };
+
+test('each chosen duration gets its own line, longest first, coloured by its own direction', () => {
+  const box = renderTrend(doc(), REAL, { durations: [1, 7, 14] });
+  const lines = [...box.querySelectorAll('.trend__line')];
+  assert.deepEqual(lines.map((l) => l.getAttribute('data-days')), ['14', '7', '1']);
+  assert.deepEqual(lines.map((l) => l.querySelector('.trend__label').textContent.replace(/:.*/, '')), ['14 days', '7 days', '1 day']);
+  for (const line of lines) {
+    const days = Number(line.getAttribute('data-days'));
+    assert.ok(line.classList.contains(`trend__line--${REAL.windows[days].direction}`), String(days));
+  }
+  assert.equal(box.querySelector('svg'), null);
+  assert.ok(box.querySelector('.trend__stat--sales'), 'recent sales still shown once, beneath the lines');
+});
+
+test('a duration with too few sales says so in plain text, and cannot be opened', () => {
+  const quiet = { ...REAL, windows: { ...REAL.windows, 1: { windowDays: 1, direction: 'unknown', pct: null, recent: { days: 1, sales: 2 }, prior: { days: 1, sales: 1 }, reason: 'not-enough-sales' } } };
+  const box = renderTrend(doc(), quiet, { durations: [7, 1], expanded: 1 });
+  const line = box.querySelector('.trend__line[data-days="1"]');
+  assert.equal(line.tagName, 'DIV');
+  assert.equal(line.textContent, '1 day: not enough sales');
+  assert.match(line.getAttribute('title'), /Each period needs at least 5 sales, on at least 1 day\./);
+  assert.equal(box.querySelector('svg'), null, 'nothing to chart for it');
+  assert.equal(box.querySelector('.trend__line[data-days="7"]').tagName, 'BUTTON');
+});
+
+test('clicking a line asks for its chart; the open one is drawn with its two periods and says how to close', () => {
+  const calls = [];
+  const closed = renderTrend(doc(), REAL, { durations: [7, 3], onToggle: (days) => calls.push(days) });
+  closed.querySelector('.trend__line[data-days="3"]').click();
+  closed.querySelector('.trend__line[data-days="7"]').click();
+  assert.deepEqual(calls, [3, 7]);
+
+  const open = renderTrend(doc(), REAL, { durations: [7, 3], expanded: 7 });
+  assert.equal(open.querySelector('.trend__line[data-days="7"]').getAttribute('aria-expanded'), 'true');
+  assert.equal(open.querySelector('.trend__line[data-days="3"]').getAttribute('aria-expanded'), 'false');
+  assert.match(open.querySelector('.trend__line[data-days="7"]').getAttribute('aria-label'), /Hide the chart$/);
+  const chart = open.querySelector(`.trend__chart--${REAL.windows[7].direction} svg.sparkline`);
+  assert.equal(chart.querySelectorAll('.sparkline__band').length, 2);
+  assert.match(chart.getAttribute('aria-label'), /Shaded: the last 7 days, and the 7 before/);
+  assert.match(open.querySelector('.trend__chart').getAttribute('title'), /Shaded: the last 7 days \(darker\) and the 7 days before/);
+  assert.equal(open.lastElementChild.classList.contains('trend__stat'), true, 'the chart sits between the lines and the figures');
+
+  assert.equal(renderTrend(doc(), REAL, { durations: [7], expanded: 1 }).querySelector('svg'), null, 'a duration that is not shown opens nothing');
+});
+
+test('a line\'s tooltip gives the medians and sales it compares', () => {
+  const box = renderTrend(doc(), REAL, { durations: [7, 3] });
+  const w = REAL.windows[3];
+  const tip = box.querySelector('.trend__line[data-days="3"]').getAttribute('title');
+  assert.match(tip, /over the last 3 days vs .* the 3 days before\./);
+  assert.ok(tip.includes(`Based on ${w.recent.sales} and ${w.prior.sales} sales.`));
+  assert.match(tip, /Near Mint Holofoil/);
+});
+
+test('updateTrend and the list pass the durations and the open chart through, by item', () => {
+  const d = doc();
+  const { state } = populated();
+  const container = d.getElementById('lists');
+  const key = state.lists[0].items[0].key;
+  const calls = [];
+  const trendView = { durations: [7, 3], expanded: { [key]: 7 }, onToggle: (k, days) => calls.push([k, days]) };
+  renderLists(d, container, state, {}, { [key]: REAL }, {}, { trendView });
+  const cell = () => container.querySelector('.item__trend');
+  assert.equal(cell().querySelectorAll('.trend__line').length, 2);
+  assert.ok(cell().querySelector('svg.sparkline'));
+  cell().querySelector('.trend__line[data-days="3"]').click();
+  assert.deepEqual(calls, [[key, 3]]);
+
+  assert.deepEqual(trendOptionsFor('other', trendView).expanded, null);
+  updateTrend(container, key, REAL, trendOptionsFor(key, { durations: [1] }));
+  assert.deepEqual([...cell().querySelectorAll('.trend__line')].map((l) => l.getAttribute('data-days')), ['1']);
+  assert.equal(cell().querySelector('svg'), null);
+  assert.doesNotThrow(() => trendOptionsFor(key).onToggle(7), 'no handler is fine');
 });

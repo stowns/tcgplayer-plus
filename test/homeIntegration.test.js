@@ -155,11 +155,11 @@ const orderNumbers = (d) => [...d.querySelectorAll('.order')].map((a) => a.getAt
 
 forEachBrowser(() => {
 
-test('the home page opens on Watch Lists, with both tabs', async () => {
+test('the home page opens on Watch Lists, with its three tabs', async () => {
   const bg = await startBackground(fakeTcgplayer());
   const { document } = await openHome(bg, '');
   assert.equal(selectedTab(document), 'lists');
-  assert.deepEqual([...document.querySelectorAll('.tab')].map((t) => t.textContent), ['Watch Lists', 'Order History']);
+  assert.deepEqual([...document.querySelectorAll('.tab')].map((t) => t.textContent), ['Watch Lists', 'Order History', 'Settings']);
   assert.match(document.title, /Watch Lists/);
   assert.match(document.querySelector('#view').textContent, /Watch Lists/);
   assert.equal(document.querySelector('h1').textContent, 'TCGPlayer+');
@@ -184,7 +184,7 @@ test('choosing a tab switches the view, the fragment and the title', async () =>
 test('only the selected tab is in the tab order, and arrow keys move between tabs', async () => {
   const bg = await startBackground(fakeTcgplayer());
   const { window, document } = await openHome(bg, '#lists');
-  assert.deepEqual([...document.querySelectorAll('.tab')].map((t) => t.tabIndex), [0, -1]);
+  assert.deepEqual([...document.querySelectorAll('.tab')].map((t) => t.tabIndex), [0, -1, -1]);
   document.querySelector('#tab-lists').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
   await settle();
   assert.equal(selectedTab(document), 'orders');
@@ -272,7 +272,7 @@ test('Refresh reads again, and an order that has aged out of TCGplayer\'s window
   assert.equal(page.document.querySelectorAll('.order').length, 6, 'and all of it is still shown');
 });
 
-test('Refresh also re-checks today\'s prices past the cache; opening the tab does not', async () => {
+test('Refresh asks for today\'s prices again', async () => {
   const site = fakeTcgplayer();
   const bg = await startBackground(site);
   const page = await openHome(bg, '#orders');
@@ -280,13 +280,13 @@ test('Refresh also re-checks today\'s prices past the cache; opening the tab doe
   await until(() => !page.document.querySelector('.ptcg-now--loading'), 12000);
   const asked = () => site.requests.filter((r) => /\/listings/.test(r.url)).length;
   const first = asked();
-  assert.ok(first > 0);
-  assert.ok(page.sent.filter((m) => m.type === 'listing-price').every((m) => !m.item.fresh), 'opening asks normally');
+  assert.equal(first, 10, 'one per item when the tab opened');
+  assert.ok(page.sent.filter((m) => m.type === 'listing-price').every((m) => !('fresh' in m.item)), 'there is no cache to ask it to skip');
 
   page.document.querySelector('.orders-bar button').click();
-  await until(() => page.sent.some((m) => m.type === 'listing-price' && m.item.fresh));
+  await until(() => asked() >= first * 2, 12000);
   await until(() => !page.document.querySelector('.ptcg-now--loading'), 12000);
-  assert.ok(asked() > first, 'the cached prices were fetched again');
+  assert.equal(asked(), first * 2, 'every price was fetched again');
   assert.match(page.document.querySelector('.ptcg-now__detail').textContent, /shipping/);
 });
 
@@ -375,7 +375,7 @@ test('switching away mid-read does not break anything (the view cleans up after 
   await settle(1500);
   assert.equal(selectedTab(page.document), 'lists');
   assert.equal(page.document.querySelectorAll('.order').length, 0);
-  assert.equal(bg.local.listeners.length, 1, 'only the lists view is listening now');
+  assert.equal(bg.local.listeners.length, 2, 'the page itself (for settings) and the lists view; the orders view has let go');
 });
 
 // ---- the order page itself feeds the archive ------------------------------------
@@ -422,17 +422,18 @@ test('the header has a Clear price cache button, to the right of the title', asy
   assert.ok(top.compareDocumentPosition(document.querySelector('.tabs')) & 4, 'above the tabs');
 });
 
-test('Clear price cache removes trends and prices, and never watch lists or the order archive', async () => {
+test('Clear price cache removes cached trends, and never watch lists, orders or settings', async () => {
   const local = storageArea({
-    lists: { version: 1, lists: [] }, orders: { orders: {} },
-    'tr:1|english|near mint|holofoil': 1, 'tr:2': 1, 'ls:3|near mint|holofoil': 1,
+    lists: { version: 1, lists: [] }, orders: { orders: {} }, settings: { notifications: { topic: 'lapras-k3x9q' } }, targets: {},
+    'tr:1|english|near mint|holofoil': 1, 'tr:2': 1, 'tr:3|english|near mint|holofoil': 1,
   });
   const bg = await startBackground(fakeTcgplayer(), local);
   const { document } = await openHome(bg, '#lists');
   document.getElementById('clearCache').click();
   await settle();
-  assert.deepEqual(Object.keys(local.data).filter((k) => !k.startsWith('tr:') && !k.startsWith('ls:')).sort(), ['lists', 'orders']);
-  assert.equal(Object.keys(local.data).some((k) => /^(tr|ls):/.test(k)), false);
+  assert.deepEqual(Object.keys(local.data).filter((k) => !k.startsWith('tr:')).sort(), ['lists', 'orders', 'settings', 'targets']);
+  assert.equal(local.data.settings.notifications.topic, 'lapras-k3x9q');
+  assert.equal(Object.keys(local.data).some((k) => /^tr:/.test(k)), false);
   assert.equal(document.getElementById('cacheStatus').textContent, 'Cleared 3 cached lookups.');
 });
 
@@ -560,8 +561,11 @@ test('a card that scrolls into view gets its trend: arrow, percent, sparkline, a
   const trend = trendOf(page.document, 'Lapras');
   assert.match(trend.className, /trend--down/, 'the fixture feed is falling');
   assert.match(trend.querySelector('.trend__summary').textContent, /^\u25BC \u221216%$/);
-  assert.equal(trend.querySelector('.trend__label').textContent, 'vs previous 7 days');
-  assert.ok(trend.querySelector('.sparkline'));
+  assert.equal(trend.querySelector('.trend__label').textContent, '7 days');
+  assert.equal(trend.querySelector('.sparkline'), null, 'no chart until the line is clicked');
+  trend.querySelector('button.trend__line').click();
+  await settle();
+  assert.ok(trendOf(page.document, 'Lapras').querySelector('.trend__chart .sparkline'), 'the chart opens beneath, as on Watch Lists');
   assert.ok(trend.querySelector('.trend__stat--sales'));
   const requested = historyRequests(site).map((r) => r.url.match(/history\/(\d+)\//)[1]);
   assert.equal(new Set(requested).size, requested.length, 'one request per distinct card');

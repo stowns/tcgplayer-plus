@@ -12,6 +12,7 @@ import { parseItemRow, parseSummary, productIdFromThumbnail } from './orderParse
 import { allocateShipping, landedNow, landedPaid } from './orderCost.js';
 import { comparePrice, totalChange } from './priceCompare.js';
 import { formatChange } from './listsPageView.js';
+import { isListingUrl } from './tcgplayerListings.js';
 
 export { productIdFromThumbnail };
 
@@ -101,7 +102,19 @@ export function renderNow(doc, { paid, paidShipping = 0, result, detail = false,
   const nowTotal = landedNow(result);
   const comparison = comparePrice(paidTotal, nowTotal);
   box.classList.add(`${NOW_CLASS}--${comparison ? comparison.direction : 'unknown'}`);
-  line(`${NOW_CLASS}__price`, `Ask ${formatMoney(nowTotal)}`);
+  const price = line(`${NOW_CLASS}__price`, '');
+  if (isListingUrl(result.url)) {
+    // The product page opens on a featured seller, so the listing itself is linked.
+    const link = doc.createElement('a');
+    link.className = `${NOW_CLASS}__link`;
+    link.href = result.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = `Ask ${formatMoney(nowTotal)}`;
+    price.append(link);
+  } else {
+    price.textContent = `Ask ${formatMoney(nowTotal)}`;
+  }
   if (comparison) line(`${NOW_CLASS}__change`, comparisonSummary(comparison));
   if (detail) {
     // What the product page's spotlight listing shows, so the two can be compared at a glance.

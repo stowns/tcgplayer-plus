@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listingsUrl, listingsBody, parseLowestListing } from '../src/lib/tcgplayerListings.js';
+import { listingsUrl, listingsBody, parseLowestListing, listingUrl, isListingUrl } from '../src/lib/tcgplayerListings.js';
 import { LAPRAS_LISTINGS, NO_LISTINGS } from './fixtures/tcgplayerListings.js';
 
 test('listingsUrl targets the product and refuses anything that is not a numeric id', () => {
@@ -34,7 +34,7 @@ test('listingsBody leaves out filters it cannot know (sealed products, no condit
 
 test('parseLowestListing takes the cheapest standard listing and ignores custom ones', () => {
   assert.deepEqual(parseLowestListing(LAPRAS_LISTINGS), {
-    price: 9.32, shipping: 1.49, seller: 'Xerneas', count: 205,
+    price: 9.32, shipping: 1.49, seller: 'Xerneas', url: '', count: 205,
   });
 });
 
@@ -89,4 +89,37 @@ test('parseLowestListing rounds prices to cents and defaults missing shipping to
   assert.equal(lowest.price, 3.1);
   assert.equal(lowest.shipping, 0);
   assert.equal(lowest.count, 0);
+});
+
+const ROW = { productId: 535952, sellerKey: 'd8035033', condition: 'Near Mint', printing: 'Holofoil', language: 'English', price: 10, shippingPrice: 1.49, listingType: 'standard', sellerName: 'Shop' };
+
+test('a listing links to the product page narrowed to its seller, condition, printing and language', () => {
+  assert.equal(listingUrl(ROW), 'https://www.tcgplayer.com/product/535952?seller=d8035033&Condition=Near+Mint&Printing=Holofoil&Language=English&page=1');
+  assert.equal(listingUrl({ productId: '7', sellerKey: 'abc' }), 'https://www.tcgplayer.com/product/7?seller=abc&page=1');
+  assert.equal(listingUrl({ ...ROW, printing: '1st Edition Holofoil' }).includes('Printing=1st+Edition+Holofoil'), true);
+});
+
+test('no link is made without a plain seller key and product id', () => {
+  for (const bad of [null, {}, { ...ROW, sellerKey: '' }, { ...ROW, sellerKey: undefined }, { ...ROW, sellerKey: 'a&b=c' }, { ...ROW, sellerKey: 'x/../y' },
+    { ...ROW, productId: 'abc' }, { ...ROW, productId: undefined }]) assert.equal(listingUrl(bad), '');
+});
+
+test('what goes into the address is escaped, never trusted', () => {
+  const url = listingUrl({ ...ROW, condition: 'Near Mint&seller=evil#x', language: '"><script>' });
+  assert.equal(new URL(url).searchParams.get('seller'), 'd8035033');
+  assert.equal(new URL(url).searchParams.get('Condition'), 'Near Mint&seller=evil#x');
+  assert.doesNotMatch(url, /[<>"#]/);
+  assert.equal(isListingUrl(url), true);
+});
+
+test('only addresses of that shape are accepted for a link', () => {
+  assert.equal(isListingUrl(listingUrl(ROW)), true);
+  for (const bad of ['', null, undefined, 5, 'javascript:alert(1)', 'https://evil.example/product/1?seller=a', 'http://www.tcgplayer.com/product/1?seller=a',
+    'https://www.tcgplayer.com/product/1', 'https://www.tcgplayer.com/product/1?seller=a"onclick="x', 'https://www.tcgplayer.com.evil.example/product/1?seller=a',
+    'https://www.tcgplayer.com/product/1?seller=a#frag', 'https://www.tcgplayer.com/product/1?seller=a b']) assert.equal(isListingUrl(bad), false, String(bad));
+});
+
+test('the cheapest listing carries its own link', () => {
+  const json = { results: [{ totalResults: 2, results: [{ ...ROW, price: 12.87, shippingPrice: 0, sellerKey: 'other' }, ROW] }] };
+  assert.equal(parseLowestListing(json).url, 'https://www.tcgplayer.com/product/535952?seller=d8035033&Condition=Near+Mint&Printing=Holofoil&Language=English&page=1');
 });

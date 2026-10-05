@@ -16,12 +16,22 @@
       <h1>TCGPlayer+</h1>
       <div class="app-header__tools">
         <span id="cacheStatus" role="status"></span>
+        <span class="auto-refresh">
+          <label class="auto-refresh__toggle"><input type="checkbox" id="autoRefreshOn"> Auto-refresh</label>
+          <label class="auto-refresh__every">every <input type="number" id="autoRefreshSeconds" min="5" step="1" inputmode="numeric" aria-label="Auto-refresh interval in seconds"> s</label>
+          <span id="autoRefreshNext" class="auto-refresh__next" role="timer" aria-live="off"></span>
+        </span>
         <button type="button" id="clearCache" class="secondary">Clear price cache</button>
       </div>
     </div>
+    <p id="rateWarning" class="rate-warning" role="alert" hidden>
+      <span>Refreshing more often than every 10 minutes may get you rate limited by TCGplayer. If prices start failing to load, raise the interval.</span>
+      <button type="button" id="rateWarningDismiss" class="secondary">Dismiss</button>
+    </p>
     <div class="tabs" role="tablist" aria-label="TCGPlayer+ views">
       <button type="button" class="tab" role="tab" id="tab-lists" data-view="lists" aria-controls="view">Watch Lists</button>
       <button type="button" class="tab" role="tab" id="tab-orders" data-view="orders" aria-controls="view">Order History</button>
+      <button type="button" class="tab" role="tab" id="tab-settings" data-view="settings" aria-controls="view">Settings</button>
     </div>
   </header>
   <main id="view" role="tabpanel"></main>

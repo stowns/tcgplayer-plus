@@ -7,7 +7,7 @@
 .list__actions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .list__sort { align-items: center; display: inline-flex; gap: 6px; }
 .list__sort-select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 13px; padding: 2px 6px; }
-.list__actions button, .item__remove { font-size: 13px; padding: 3px 10px; }
+.list__actions button, .item__remove, .item__target-set { font-size: 13px; padding: 3px 10px; }
 .list__empty { color: var(--ink-soft); margin: 14px 0 0; }
 
 .item-list { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 8px 0 0; padding: 0; }
@@ -19,30 +19,44 @@
 .item__name:hover { text-decoration: underline; }
 .item__subtitle, .item__price, .item__saved { color: var(--ink-soft); font-size: 13px; margin: 2px 0 0; }
 .item__price { font-variant-numeric: tabular-nums; }
-.item__remove { flex: none; }
+/* A fixed width, so the trend beside it lines up whether or not "Set price target" is showing. */
+.item__side { align-items: stretch; display: flex; flex: none; flex-direction: column; gap: 6px; width: 122px; }
+.item__target-set[hidden] { display: none; }
 .empty { border: 1px dashed var(--line); border-radius: 10px; color: var(--ink-soft); margin-top: 24px; padding: 30px; text-align: center; }
 
 /* ---- price trend ---------------------------------------------------------- */
 
-.item__trend { flex: none; text-align: right; width: 124px; }
+.item__trend { flex: none; text-align: right; width: 150px; }
 .trend { color: var(--ink-soft); display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+/* One line per duration: the percent, then how many days it covers. A button when its chart can be opened. */
+.trend__line { align-items: baseline; background: none; border: 0; border-radius: 4px; color: var(--ink-soft); display: flex; font: inherit; gap: 8px; justify-content: flex-end; margin: 0; padding: 0; }
+button.trend__line { cursor: pointer; }
+button.trend__line:hover .trend__label { text-decoration: underline; }
+button.trend__line:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The open line is marked without moving its text off the right edge: the tint spreads outside the box. */
+button.trend__line[aria-expanded="true"] { background: var(--paper); box-shadow: 0 0 0 3px var(--paper); }
 .trend__summary { font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-.trend__label { font-size: 11px; }
-.trend__note { color: var(--ink); font-size: 11px; font-style: italic; max-width: 124px; text-align: right; }
+/* Flush right like everything else in the column; the fixed width keeps the percents in a column of their own. */
+.trend__label { color: var(--ink-soft); font-size: 11px; min-width: 40px; text-align: right; white-space: nowrap; }
+.trend__line--unknown .trend__label { min-width: 0; }
+.trend__note { color: var(--ink); font-size: 11px; font-style: italic; max-width: 150px; text-align: right; }
 .trend__stat { color: var(--ink-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
-.trend .sparkline { display: block; margin-top: 4px; }
+.trend__chart { margin: 3px 0; }
+.trend__chart .sparkline { display: block; }
 .trend--loading .trend__summary { font-weight: 400; }
 .trend[data-retrying="1"] .trend__summary, .item__ask[data-retrying="1"] { color: var(--warn); }
-.trend--unknown .trend__summary { font-size: 12px; font-weight: 400; white-space: normal; }
+.trend--unknown > .trend__summary { font-size: 12px; font-weight: 400; white-space: normal; }
 
-/* Rising is green, falling is red, as on the order pages. The sparkline follows the colour. */
-.trend--up { color: var(--gain); }
-.trend--down { color: var(--loss); }
+/* Rising is green, falling is red, as on the order pages. Each line and its chart carry their own colour. */
+.trend__line--up .trend__summary, .trend__chart--up { color: var(--gain); }
+.trend__line--down .trend__summary, .trend__chart--down { color: var(--loss); }
 
 @media (max-width: 640px) {
   .item { flex-wrap: wrap; }
   .item__trend { order: 3; text-align: left; width: 100%; }
   .trend { align-items: flex-start; }
+  .trend__line { justify-content: flex-start; }
+  .trend__label { text-align: left; }
   .trend__note { text-align: left; }
 }
 
@@ -55,3 +69,33 @@
 .pager__range { color: var(--ink-soft); font-size: 13px; margin-right: auto; }
 .pager button { font-size: 13px; padding: 3px 12px; }
 .pager button:disabled { cursor: default; opacity: 0.45; }
+
+/* ---- price target --------------------------------------------------------- */
+.item__target { margin-top: 4px; }
+.item__target-line { color: var(--ink-soft); font-size: 13px; margin: 0; }
+.item__target-text { color: var(--ink); }
+.item__target-how { color: var(--accent); }
+.item__target-met { color: var(--gain); font-weight: 600; }
+.item__target-paused { color: var(--warn); }
+.target-form { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.target-form__row { align-items: center; display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px 8px; }
+.target-form select, .target-form__price { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 13px; padding: 3px 6px; }
+.target-form__price { width: 9ch; }
+.target-form__currency { color: var(--ink-soft); margin-right: -4px; }
+.target-form__notify-label { align-items: center; cursor: pointer; display: inline-flex; gap: 4px; }
+.target-form button { font-size: 13px; padding: 3px 10px; }
+.target-form__alert { border-left: 3px solid var(--warn); color: var(--ink); font-size: 13px; margin: 8px 0 0; padding-left: 8px; }
+.target-form__alert[hidden], .target-form__setup[hidden] { display: none; }
+.target-form__setup { font-size: 13px; margin: 8px 0 0; }
+.target-form__word { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 13px; padding: 3px 6px; width: 20ch; }
+.target-form__setup-note { color: var(--ink-soft); }
+.target-form__error { color: var(--danger); font-size: 13px; margin: 6px 0 0; }
+
+/* ---- where to subscribe, after the first target with notifications --------- */
+.subscribe-notice { align-items: center; background: var(--surface); border: 1px solid var(--accent); border-radius: 8px; display: flex; flex-wrap: wrap; font-size: 14px; gap: 8px 14px; justify-content: space-between; margin: 12px 0 0; padding: 10px 14px; }
+.subscribe-notice[hidden] { display: none; }
+.subscribe-notice__text { flex: 1; min-width: 26ch; }
+.subscribe-notice__topic { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; font-size: 13px; padding: 1px 5px; }
+.subscribe-notice__link { color: var(--accent); font-weight: 600; }
+.subscribe-notice__dismiss { font-size: 13px; padding: 3px 10px; }
+.item__ask-link { color: var(--accent); }

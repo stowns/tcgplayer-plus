@@ -41,6 +41,15 @@ test('only TCGplayer sites are asked for', () => {
   }
 });
 
+test('the watch-list button\'s script runs on every TCGplayer page, not only product pages', () => {
+  // The site moves from a search to a product without reloading, so a script
+  // limited to /product/ would never start for someone who arrived that way.
+  for (const m of Object.values(manifests)) {
+    const product = m.content_scripts.find((c) => c.js.includes('content/tcgplayerProduct.js'));
+    assert.deepEqual(product.matches, ['https://www.tcgplayer.com/*']);
+  }
+});
+
 test('Firefox runs a background script and carries its add-on ID', () => {
   assert.deepEqual(firefox.background, { scripts: ['background.js'] });
   assert.equal(firefox.browser_specific_settings.gecko.id, 'tcgplayer-plus@simontownsend');

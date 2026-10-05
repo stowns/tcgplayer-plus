@@ -25,15 +25,21 @@ export const TREND = {
    * the version they were worked out under, and an older one is recomputed
    * instead of being shown with the old rules.
    */
-  VERSION: 2,
+  VERSION: 3,
   /** Within this fraction either way, the price is called flat. */
   FLAT_BAND: 0.01,
   /** Each window needs at least this many days with sales... */
   MIN_DAYS: 3,
   /** ...and at least this many transactions in total. */
   MIN_SALES: 5,
-  /** Window lengths tried in order: recent N days vs the N days before. */
+  /** Window lengths tried in order for the headline: recent N days vs the N days before. */
   WINDOWS: [7, 14],
+  /**
+   * The durations a person can choose to see, each worked out the same way. All
+   * fit inside the thirty daily points TCGplayer gives; nothing finer than a day exists.
+   */
+  DURATIONS: [1, 3, 7, 14],
+  DEFAULT_DURATIONS: [7],
   /**
    * The newest few sale-days are compared with the rest of the recent window to
    * catch a card that has already reversed. Wider than FLAT_BAND because a
@@ -82,7 +88,25 @@ function windowStats(days) {
   };
 }
 
-const enough = (w) => w.days >= TREND.MIN_DAYS && w.sales >= TREND.MIN_SALES;
+/** A window shorter than MIN_DAYS cannot have that many days of sales; it needs every one it has room for. */
+const enough = (w, length) => w.days >= Math.min(TREND.MIN_DAYS, length) && w.sales >= TREND.MIN_SALES;
+
+/**
+ * The newest `length` days against the `length` before them.
+ * @returns {{windowDays: number, direction: 'up'|'down'|'flat'|'unknown', pct: number|null,
+ *   recent: object, prior: object, reason: 'ok'|'not-enough-sales'}}
+ */
+function windowTrend(between, length) {
+  const recent = windowStats(between(0, length));
+  const prior = windowStats(between(length, length * 2));
+  if (!enough(recent, length) || !enough(prior, length)) {
+    return { windowDays: length, direction: 'unknown', pct: null, recent, prior, reason: 'not-enough-sales' };
+  }
+  // Rounded so a move of exactly 1% is not lost to floating point.
+  const pct = Math.round((recent.median / prior.median - 1) * 10000) / 10000;
+  const direction = Math.abs(pct) >= TREND.FLAT_BAND ? (pct > 0 ? 'up' : 'down') : 'flat';
+  return { windowDays: length, direction, pct, recent, prior, reason: 'ok' };
+}
 
 /**
  * A week-on-week median lags. A card that spiked and then fell back reads "up"
@@ -124,7 +148,9 @@ function withoutOutliers(sold) {
  *   windowDays: number|null, recent: object|null, prior: object|null,
  *   latest: object|null, turning: 'up'|'down'|null,
  *   series: {date: string, price: number}[], outliersHidden: number,
- *   reason: 'ok'|'no-data'|'not-enough-sales'}}
+ *   reason: 'ok'|'no-data'|'not-enough-sales',
+ *   windows?: Record<number, object>, asOf?: string}}  `windows` holds every duration in TREND.DURATIONS;
+ *   `asOf` is the newest day in the data, which the windows are measured back from
  */
 export function computeTrend(days) {
   const all = Array.isArray(days) ? days.filter((d) => d && toDay(d.date)) : [];
@@ -147,25 +173,63 @@ export function computeTrend(days) {
     return n > newest - to && n <= newest - from;
   });
 
+  // Every duration on offer, so choosing which to show never needs the history again.
+  const windows = {};
+  for (const length of TREND.DURATIONS) windows[length] = windowTrend(between, length);
+  const shared = { ...base, windows, asOf: all[all.length - 1].date };
+
   let lastTried = null;
   for (const length of TREND.WINDOWS) {
-    const recent = windowStats(between(0, length));
-    const prior = windowStats(between(length, length * 2));
-    lastTried = { recent, prior };
-    if (!enough(recent) || !enough(prior)) continue;
-
-    // Rounded so a move of exactly 1% is not lost to floating point.
-    const pct = Math.round((recent.median / prior.median - 1) * 10000) / 10000;
-    const direction = Math.abs(pct) >= TREND.FLAT_BAND ? (pct > 0 ? 'up' : 'down') : 'flat';
-    const { latest, turning } = checkTurn(between(0, length), direction, recent.median);
-    return { ...base, direction, pct, windowDays: length, recent, prior, latest, turning, reason: 'ok' };
+    const found = windows[length] || windowTrend(between, length);
+    lastTried = found;
+    if (found.reason !== 'ok') continue;
+    const { latest, turning } = checkTurn(between(0, length), found.direction, found.recent.median);
+    return { ...shared, direction: found.direction, pct: found.pct, windowDays: length, recent: found.recent, prior: found.prior, latest, turning, reason: 'ok' };
   }
 
   return {
-    ...base, direction: 'unknown', pct: null, windowDays: null,
+    ...shared, direction: 'unknown', pct: null, windowDays: null,
     recent: lastTried && lastTried.recent, prior: lastTried && lastTried.prior,
     latest: null, turning: null, reason: 'not-enough-sales',
   };
+}
+
+/** The durations asked for that exist, longest first; the default when none do. */
+export function cleanDurations(durations) {
+  const wanted = [...new Set((Array.isArray(durations) ? durations : []).map(Number))]
+    .filter((d) => TREND.DURATIONS.includes(d))
+    .sort((a, b) => b - a);
+  return wanted.length ? wanted : [...TREND.DEFAULT_DURATIONS];
+}
+
+/**
+ * One line per chosen duration, longest first; the first is the headline.
+ * A quiet card's 7 days widen to 14, as the headline always has, unless 14 has
+ * its own line. Empty when there is nothing to compare (no data, or unavailable).
+ * @returns {{days: number, shownDays: number, direction: string, pct: number|null,
+ *   recent: object|null, prior: object|null, reason: string, headline: boolean}[]}
+ */
+export function selectTrendLines(trend, durations) {
+  if (!trend) return [];
+  if (!trend.windows) {
+    // A trend worked out without the per-duration windows still has its headline.
+    if (trend.direction === 'unknown' || !Number.isFinite(trend.windowDays)) return [];
+    return [{
+      days: trend.windowDays, shownDays: trend.windowDays, direction: trend.direction, pct: trend.pct,
+      recent: trend.recent, prior: trend.prior, reason: 'ok', headline: true,
+    }];
+  }
+  const chosen = cleanDurations(durations);
+  return chosen.map((days, index) => {
+    let found = trend.windows[days];
+    if (!found) return null;
+    const wider = trend.windows[14];
+    if (days === 7 && found.reason !== 'ok' && !chosen.includes(14) && wider && wider.reason === 'ok') found = wider;
+    return {
+      days, shownDays: found.windowDays, direction: found.direction, pct: found.pct,
+      recent: found.recent, prior: found.prior, reason: found.reason, headline: index === 0,
+    };
+  }).filter(Boolean);
 }
 
 /** A card needs at least this many sale-days in the chart before its swings mean anything. */

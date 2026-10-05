@@ -8,6 +8,9 @@ A Firefox and Chrome extension that adds what TCGplayer is missing:
   after TCGplayer stops listing them, with what each card would cost today and
   your total gain or loss, counting shipping on both sides.
 - **Prices on TCGplayer's own order page**, right under what you paid.
+- **Price targets.** Set a price on any watch-list product and be notified
+  when its Ask reaches it, with prices refreshing on their own while the
+  dashboard is open.
 
 Clicking the toolbar button opens the **TCGPlayer+** home page: one tab per
 view, opening on the one you used last.
@@ -68,6 +71,10 @@ the lists it belongs in, or type a name to start a new one — creating a list
 from that panel saves the card into it straight away. The button then reads
 "On 2 watch lists", so you can see at a glance what you have already kept.
 
+TCGplayer opens a product from a search or from another product without
+reloading the page, so the extension's script runs on every `www.tcgplayer.com`
+page and waits for a product's address; on other pages it adds nothing.
+
 **Manage watch lists** opens the Watch Lists tab of TCGPlayer+, where you
 can rename and delete lists, remove items, and export everything as JSON.
 
@@ -97,14 +104,21 @@ Two different numbers are kept apart on purpose:
   in the card's condition and printing, **price plus shipping** (TCGplayer's
   featured `spotlight__listing`, with the breakdown: "Ask $10.49 ($9.50 +
   $0.99 shipping)"). It sits just after Market on every card, and is fetched as
-  the card scrolls into view (cached for ten minutes). It is the price used for
+  the card scrolls into view. It is never cached: every look asks TCGplayer
+  afresh. It is the price used for
   every gain or loss, and for sorting, because it is what you would actually pay.
   Listings that are "custom" (a seller's photo of one copy) are ignored, as they
   are on the product page.
+  **view listing** beside the Ask opens the product page narrowed to that seller,
+  condition and printing, because the page's own first view features a seller
+  of TCGplayer's choosing rather than the cheapest. In Order History the Ask
+  itself is the link.
 
 The trend chart's "Recent sales" figure is a third thing again: what the card
-has just been selling for. It is labelled that way, so it is never mistaken for
-either of the others.
+has just been selling for, **before shipping** (TCGplayer's sales history
+carries no shipping). It is labelled "Recent sales" with "before shipping"
+beneath it, so it is not mistaken for either of the others. Price targets are
+compared with Ask, which includes shipping.
 
 ### Choosing a list, and paging
 
@@ -148,16 +162,28 @@ control because there is nothing to order.
 ### Price trend
 
 Each saved item shows whether its price is moving **▲ up**, **▼ down** or
-**▬ flat**, with the percentage change and a 30-day sparkline. Hover it for the
-numbers behind it.
+**▬ flat**, with the percentage change and the number of days it covers
+("▲ +2.1%  7 days"). Hover a line for the numbers behind it.
 
-The trend is the **median daily sold price over the last 7 days compared with
-the 7 days before**, read from the same price-history feed TCGplayer's own
+A trend is the **median daily sold price over the last N days compared with
+the N days before**, read from the same price-history feed TCGplayer's own
 product page draws its chart from. It deliberately does *not* use the
 `spotlight__price`: that is the current lowest *asking* price, so comparing it
 with sales says whether a listing is cheap, not which way the market is going.
 Nor does it use the single latest sale, which is one noisy point (five sales in
 eight hours spanned $71-$87 on one card).
+
+**Several durations.** The **Settings** tab chooses which trends each card
+shows: **1, 3, 7 and 14 days**, any combination, 7 days to begin with. Each gets
+its own line, longest first, coloured by its own direction. All of them come
+from the 30 days of history already fetched, so adding one asks TCGplayer
+nothing more. TCGplayer reports sales by the day, and today's are still coming
+in, so "1 day" (today against yesterday) moves the most.
+
+**The chart is opened by clicking a line.** It shows the last 30 days of sales
+with the two periods that line compares shaded, the newer one darker. Click the
+line again to close it. Charts are closed to begin with, because one chart under
+several percentages would not say which of them it belonged to.
 
 The details that make it trustworthy:
 
@@ -167,13 +193,16 @@ The details that make it trustworthy:
   sales) or a single $440 sale on a card that trades around $75-97 would wreck a
   mean. Such days are also left off the chart, and the tooltip says so.
 - **Within ±1% is called flat.**
-- **Quiet cards widen to 14 days vs 14.** Each period needs at least 5 sales on
-  3 different days; if even 14 days is too thin it says "Not enough recent
-  sales" rather than guessing.
+- **Too few sales is said, not guessed.** Each period needs at least 5 sales,
+  on 3 different days (or on every day of a 1-day or 3-day period). A line
+  without that reads "1 day: not enough sales". A quiet card's 7-day trend
+  widens to 14 days vs 14 and is labelled "14 days", unless 14 days has a line
+  of its own.
 - **A trend that has already turned is flagged.** A week-on-week median lags: a
   card that spiked to $120 and fell back to $75 still reads "up" for the week
   while dropping today. When the newest three days of sales are moving against
-  the arrow by 5% or more, it adds "but falling in the last 3 days".
+  the arrow by 5% or more, it adds "but falling in the last 3 days" under the
+  longest line shown (7 or 14 days).
 - **Colour.** Rising is green and falling is red, as on the order pages. A flat
   or unknown trend stays grey. The colour says which way it moved, not whether
   that is good news for you.
@@ -186,6 +215,87 @@ whole range (`month`, `quarter`, ...), not "just today", so a refresh fetches th
 month again. If the feed stays unreachable the row says "Trend unavailable" and
 nothing else is affected. The feed is undocumented, so it could change without
 notice.
+
+### Price targets
+
+Every watch-list item has a **Set price target** link. A target is a price and a
+direction:
+
+- **At or below**, for a buyer: "tell me when I can get it for $10 or less".
+- **At or above**, for a seller: "tell me when it reaches $50".
+
+It is compared with the **Ask**, price plus shipping, the figure the list shows.
+**Notify me** is on by default. Once set, the item shows the target ("Target: at
+or below $10.00 · notifications on"), **Target met** in green while it is, and
+**Edit**, which also offers **Remove target**.
+
+- A target belongs to the product, so the same card in two lists shares one. It
+  is removed when the card is in no list any more.
+- You are told **once**, when the target becomes met, not on every refresh. If
+  the price moves back out of range and returns, you are told again. Changing a
+  target starts it afresh, and one that is already met when you set it notifies
+  straight away.
+- If nothing is listed, or the lookup fails, a target is left as it was: that is
+  not a price.
+- **Tracking happens in your browser.** Targets are checked on each
+  auto-refresh, so they are only checked while the dashboard tab is open and
+  auto-refresh is on. If you turn notifications on for a target while
+  auto-refresh is off, the form says so and offers **Enable auto-refresh**; a
+  target that is not being checked says "not being checked: auto-refresh is off".
+- Targets are included in **Export JSON**.
+
+### Auto-refresh
+
+In the dashboard's header, beside **Clear price cache**: a switch, an interval
+in seconds, and a countdown to the next refresh. It is **off** until you turn it
+on, and starts at 600 seconds (ten minutes). The least is 5 seconds.
+
+- Each refresh asks again for the Ask and trend of the cards on the page shown
+  in Watch Lists, or the Asks of the orders shown in Order History (orders
+  themselves are not read again: they do not change), and checks every price
+  target, whichever tab is showing. A refresh still running when the next is due
+  is not joined by another.
+- **The Ask is never cached**, so a refresh always gets a live price. Trends are
+  still kept for an hour, because that is how often TCGplayer updates them.
+- An interval under ten minutes shows a warning that TCGplayer may start
+  refusing requests, and to raise it if prices stop loading. **Dismiss** records
+  that you have seen it, and it is not shown again.
+- It runs only while a dashboard tab is open. Browsers slow the timers of a tab
+  in the background (to about once a minute after a while), so an interval of a
+  few seconds is only exact while the dashboard is the tab you are looking at.
+- With two dashboard tabs open, both refresh what they show, but only one checks
+  the targets, so you are not notified twice.
+
+### Notifications
+
+Notifications go through [ntfy](https://ntfy.sh), a free service that needs no
+account. You choose a **secret word**, either in the **Settings** tab or in the
+target form the first time you save a target with notifications on. Your
+**topic** is that word, a dash and five random letters and digits
+(`lapras-k3x9q`), short enough to type on another device. Subscribe to it in
+the ntfy app (Android, iPhone) or open its page in a browser, and price-target
+alerts arrive there. Settings shows the topic, step-by-step instructions for
+subscribing on a phone or a computer, and **Send test notification**. A target
+with notifications on links to those instructions ("how to receive them"). The
+first time a target asks for notifications, the Watch Lists page shows a notice
+with your topic and a link to the Settings tab; it stays until you dismiss it or
+follow the link.
+
+- The secret word is 3 to 24 letters or digits, kept in lower case. The topic is
+  reused for every notification. On ntfy the topic name is the only secret:
+  anyone who knows it can read what is sent to it, so do not share it, and pick
+  a word others would not guess. **Change secret word** makes a new topic; you
+  then subscribe to the new one.
+- A notification holds the card's name, its Ask and your target, and a link to
+  the product page. Nothing about you or your orders is sent, and nothing is sent
+  at all unless a target is met or you press the test button.
+- **Firefox asks first.** Sending this to ntfy counts as transmitting website
+  content, so Firefox shows its own permission prompt the first time you save a
+  target with notifications on, or send a test. If you decline, targets are still
+  saved and shown as met, but nothing is sent; pressing **Send test
+  notification** asks again.
+- If ntfy cannot be reached, the notification is kept as owed and sent on a later
+  refresh, as long as the target is still met.
 
 ### When TCGplayer is slow or failing
 
@@ -219,11 +329,11 @@ did get and reports that it stopped part-way.
 
 ## The TCGPlayer+ home page
 
-Clicking the toolbar button opens a page with one tab per view: **Watch Lists** (above) and **Order History**. It opens on the tab you used last. There is no popup in between.
+Clicking the toolbar button opens a page with one tab per view: **Watch Lists** (above), **Order History** and **Settings**. It opens on the tab you used last. There is no popup in between.
 
 ### Order History tab
 
-Your TCGplayer purchases, laid out for reading: for each order the date, order number, seller, channel, shipping status and totals, and for each item its name (linked to the product page), set, rarity, condition, the price you paid, and what it would cost today (same method, colours and caveats as on TCGplayer's own order page, below). Each item also shows the **price trend** for that card and condition, the same picture as in Watch Lists (arrow, percent change, recent sales, volatility and sparkline; see Price trend above). Trends are fetched only for items that scroll into view, and orders holding the same card share one lookup. At the top, the **total gain or loss** across the orders shown, and each order's own.
+Your TCGplayer purchases, laid out for reading: for each order the date, order number, seller, channel, shipping status and totals, and for each item its name (linked to the product page), set, rarity, condition, the price you paid, and what it would cost today (same method, colours and caveats as on TCGplayer's own order page, below). Each item also shows the **price trend** for that card and condition, the same picture as in Watch Lists (a line per chosen duration, recent sales, volatility, and the chart on a click; see Price trend above). Trends are fetched only for items that scroll into view, and orders holding the same card share one lookup. At the top, the **total gain or loss** across the orders shown, and each order's own.
 
 - **Not shown, and never stored:** SHIP TO, BILL TO, your name, addresses, and the Contact Seller / Rate Transaction buttons. The reader names the fields it wants rather than filtering out the ones it does not; a test proves no address text can reach storage.
 - **Where it comes from.** Opening the tab reads your Order History from TCGplayer using your signed-in session (only if the last read is over ten minutes old; **Refresh** forces it). Visiting TCGplayer's own Order History page also saves what it shows.
@@ -247,7 +357,7 @@ Ask $10.81
 - **A total at the top of the page.** Above the first order, the combined change for every item on the page: what you paid, their Ask, and the difference in dollars and percent, in green or red. Items with no live listing or no readable price are left out and counted separately ("6 without a price") so the total is never mistaken for the whole page. Quantities are multiplied in. Both sides include shipping (see above); tax is excluded.
 - **Custom listings are ignored** (a seller's photo of one particular copy), as the product page's headline price does.
 - **No account access.** The extension reads the item tables already on the page you are looking at, and asks TCGplayer's public listings service for prices. Nothing about your account or orders is sent anywhere.
-- **Limits.** Prices are cached for 10 minutes, because cheap listings sell within the hour. In the TCGPlayer+ tab each price also shows its shipping, seller and how long ago it was checked, so it can be compared with the product page's featured listing; **Refresh** there re-checks every price. "No ask" means no live listing matches that condition. The listings service is undocumented, so a change on TCGplayer's side shows as "Price unavailable" rather than breaking the page. Quantities above one are compared per item, as the page's PRICE column is per item.
+- **Limits.** Prices are not cached: each visit asks again, because cheap listings sell within the hour. In the TCGPlayer+ tab each price also shows its shipping, seller and how long ago it was checked, so it can be compared with the product page's featured listing; **Refresh** there re-checks every price. "No ask" means no live listing matches that condition. The listings service is undocumented, so a change on TCGplayer's side shows as "Price unavailable" rather than breaking the page. Quantities above one are compared per item, as the page's PRICE column is per item.
 
 ## Development
 
@@ -264,13 +374,19 @@ npm run build:stripes # the same, with the plain-stripes icon instead of the one
 - `src/content/` — thin glue on TCGplayer's own pages (the Save button on
   product pages, the prices on the order page).
 - `src/background.js` — opens the dashboard when the toolbar button is clicked, and
-  runs the price lookups, their caches and request pacing. It
+  runs the price lookups, the trend cache and request pacing. It
   touches no DOM, because Chrome runs it as a service worker. Reading the order
   pages (which needs an HTML parser) happens in the Order History view instead,
   through `src/lib/orderReader.js`.
 - `src/lib/retry.js`, `src/lib/httpClient.js` — the retry strategy (backoff with
   jitter) and the one client every request to TCGplayer goes through.
   `src/lib/retryState.js` is how a screen shows "retrying".
+- `src/lib/settings.js`, `autoRefresh.js`, `targets.js`, `priceWatch.js` — the
+  settings, the refresh timer, price targets, and the check that compares them
+  with the Ask and sends what is owed.
+- `src/lib/notifications.js` — the notification interface: what is said is kept
+  apart from how it is delivered. `src/lib/ntfy.js` is the one channel so far;
+  `src/lib/consent.js` is Firefox's permission step before anything is sent.
 - `src/lib/runtime.js` — the one place that picks `browser` or `chrome` and
   answers messages in the way both browsers accept.
 - `scripts/icon.js` — draws the icon (stripes in the TCGplayer logo's colours, in
@@ -299,6 +415,10 @@ npm run build:stripes # the same, with the plain-stripes icon instead of the one
   pages cannot be assumed. If the Order History tab says you are not signed in
   when you are, visiting TCGplayer's own Order History page still saves what it
   shows.
+- Price targets are only checked while the dashboard is open with auto-refresh
+  on. Closing the tab stops the tracking.
+- A very short auto-refresh interval, with no price cache, can get requests
+  refused by TCGplayer. The retries back off, but the remedy is a longer interval.
 - The Ask is what a card would cost to buy today, not what you would get selling
   it. The green and red are a holder's view of that.
 - This is a decision aid, not investment advice. Condition, centering,

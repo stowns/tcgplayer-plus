@@ -15,7 +15,7 @@ import { totalChange } from './priceCompare.js';
 import { listingCacheKey } from './listingLookup.js';
 import { allocateShipping, costLine, landedPaid } from './orderCost.js';
 import { renderNow, renderTotal, comparisonSummary } from './orderHistoryDom.js';
-import { renderTrend } from './listsPageView.js';
+import { renderTrend, trendOptionsFor } from './listsPageView.js';
 import { trendCacheKey } from './trendLookup.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -74,7 +74,7 @@ export function linesFor(orders, results) {
   });
 }
 
-function renderItem(doc, item, results, share = 0, trends = {}) {
+function renderItem(doc, item, results, share = 0, trends = {}, trendView = {}) {
   const li = el(doc, 'li', 'oitem');
   li.setAttribute('data-key', lookupable(item) ? itemKeyOf(item) : '');
   const trendKey = trendKeyOf(item);
@@ -109,7 +109,7 @@ function renderItem(doc, item, results, share = 0, trends = {}) {
 
   // Where its price has been going, the same picture the Watch Lists view draws.
   const trend = el(doc, 'div', 'oitem__trend');
-  if (trendKey) trend.append(renderTrend(doc, trends[trendKey] || null));
+  if (trendKey) trend.append(renderTrend(doc, trends[trendKey] || null, trendOptionsFor(trendKey, trendView)));
   li.append(trend);
 
   // What it cost: the price, plus this item's share of the order's shipping.
@@ -142,7 +142,7 @@ export function renderOrderChange(doc, order, results) {
   return chip;
 }
 
-export function renderOrder(doc, order, results = {}, trends = {}) {
+export function renderOrder(doc, order, results = {}, trends = {}, trendView = {}) {
   const article = el(doc, 'article', 'order');
   article.setAttribute('data-order', order.orderNumber);
 
@@ -176,7 +176,7 @@ export function renderOrder(doc, order, results = {}, trends = {}) {
 
   const list = el(doc, 'ul', 'oitem-list');
   const shares = allocateShipping(order.summary, order.items);
-  order.items.forEach((item, at) => list.append(renderItem(doc, item, results, shares[at], trends)));
+  order.items.forEach((item, at) => list.append(renderItem(doc, item, results, shares[at], trends, trendView)));
   if (!order.items.length) list.append(el(doc, 'li', 'oitem oitem--empty', 'No items were read for this order.'));
   article.append(list);
 
@@ -221,12 +221,12 @@ export function renderNotice(doc, kind, { range = '' } = {}) {
  * The whole list plus the total above it.
  * @returns {{orders: number, items: number}}
  */
-export function renderOrders(doc, container, orders, results = {}, trends = {}) {
+export function renderOrders(doc, container, orders, results = {}, trends = {}, trendView = {}) {
   container.replaceChildren();
   if (!orders.length) return { orders: 0, items: 0 };
   container.append(renderSummary(doc, orders, results));
   const list = el(doc, 'div', 'order-list');
-  for (const order of orders) list.append(renderOrder(doc, order, results, trends));
+  for (const order of orders) list.append(renderOrder(doc, order, results, trends, trendView));
   container.append(list);
   return { orders: orders.length, items: orders.reduce((n, o) => n + o.items.length, 0) };
 }
@@ -246,13 +246,13 @@ export function renderSummary(doc, orders, results) {
  * Swap a trend in place in every row that holds that card, without redrawing the orders.
  * @returns {boolean} whether any row was found
  */
-export function updateOrderTrend(container, key, trend) {
+export function updateOrderTrend(container, key, trend, trendView) {
   let found = false;
   for (const li of container.querySelectorAll('.oitem[data-trend-key]')) {
     if (li.getAttribute('data-trend-key') !== key) continue;
     const cell = li.querySelector('.oitem__trend');
     if (!cell) continue;
-    cell.replaceChildren(renderTrend(container.ownerDocument, trend));
+    cell.replaceChildren(renderTrend(container.ownerDocument, trend, trendOptionsFor(key, trendView)));
     found = true;
   }
   return found;

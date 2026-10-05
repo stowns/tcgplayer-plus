@@ -19,24 +19,38 @@ const round = (n) => Math.round(n * 100) / 100;
 
 /**
  * @param {{date: string, price: number}[]} series sale-days, oldest first
- * @param {{width?: number, height?: number, pad?: number, spanDays?: number}} [options]
+ * @param {{width?: number, height?: number, pad?: number, spanDays?: number, endDate?: string,
+ *   highlightDays?: number}} [options] `endDate` is the day the right edge stands for (the newest
+ *   sale-day when omitted); `highlightDays` marks the newest N days and the N before them
  */
-export function buildSparkline(series, { width = 96, height = 28, pad = 3, spanDays = 30 } = {}) {
+export function buildSparkline(series, { width = 96, height = 28, pad = 3, spanDays = 30, endDate, highlightDays } = {}) {
   const data = Array.isArray(series) ? series.filter((p) => p && Number.isFinite(p.price)) : [];
   if (data.length === 0) {
-    return { width, height, path: '', points: [], end: null, min: null, max: null, empty: true };
+    return { width, height, path: '', points: [], end: null, min: null, max: null, bands: [], empty: true };
   }
 
   const prices = data.map((p) => p.price);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
-  const newest = dayNumber(data[data.length - 1].date);
+  const anchored = typeof endDate === 'string' && Number.isFinite(dayNumber(endDate));
+  const newest = anchored ? dayNumber(endDate) : dayNumber(data[data.length - 1].date);
   const innerW = width - 2 * pad;
   const innerH = height - 2 * pad;
+  const xOf = (age) => pad + (1 - age / (spanDays - 1)) * innerW;
+
+  // Each day owns half a day either side of its mark, so a one-day period is still a visible strip.
+  const bands = [];
+  if (Number.isFinite(highlightDays) && highlightDays > 0) {
+    const edge = (age) => round(Math.min(Math.max(xOf(age), 0), width));
+    for (const [name, from, to] of [['prior', highlightDays * 2 - 0.5, highlightDays - 0.5], ['recent', highlightDays - 0.5, -0.5]]) {
+      const x = edge(from);
+      bands.push({ name, x, width: round(edge(to) - x) });
+    }
+  }
 
   const points = data.map((p) => {
     const age = Math.min(Math.max(newest - dayNumber(p.date), 0), spanDays - 1);
-    const x = pad + (1 - age / (spanDays - 1)) * innerW;
+    const x = xOf(age);
     const y = max === min ? height / 2 : pad + (1 - (p.price - min) / (max - min)) * innerH;
     return { x: round(x), y: round(y), date: p.date, price: p.price };
   });
@@ -45,7 +59,7 @@ export function buildSparkline(series, { width = 96, height = 28, pad = 3, spanD
     ? points.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ')
     : '';
   const last = points[points.length - 1];
-  return { width, height, path, points, end: { x: last.x, y: last.y }, min, max, empty: false };
+  return { width, height, path, points, end: { x: last.x, y: last.y }, min, max, bands, empty: false };
 }
 
 /** @returns {SVGSVGElement|null} */
@@ -61,10 +75,23 @@ export function renderSparkline(doc, series, options) {
   svg.setAttribute('role', 'img');
   const first = g.points[0];
   const last = g.points[g.points.length - 1];
+  const days = options && options.highlightDays;
   svg.setAttribute(
     'aria-label',
-    `Sold price over the last 30 days, from ${formatMoney(first.price)} to ${formatMoney(last.price)}`,
+    `Sold price over the last 30 days, from ${formatMoney(first.price)} to ${formatMoney(last.price)}`
+      + (g.bands.length ? `. Shaded: the last ${days} day${days === 1 ? '' : 's'}, and the ${days} before` : ''),
   );
+  for (const band of g.bands) {
+    const rect = doc.createElementNS(SVG, 'rect');
+    rect.setAttribute('class', `sparkline__band sparkline__band--${band.name}`);
+    rect.setAttribute('x', String(band.x));
+    rect.setAttribute('y', '0');
+    rect.setAttribute('width', String(band.width));
+    rect.setAttribute('height', String(g.height));
+    rect.setAttribute('fill', 'currentColor');
+    rect.setAttribute('fill-opacity', band.name === 'recent' ? '0.22' : '0.09');
+    svg.append(rect);
+  }
 
   if (g.path) {
     const line = doc.createElementNS(SVG, 'path');

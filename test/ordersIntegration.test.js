@@ -113,12 +113,13 @@ test('one request per item, and each row is annotated exactly once', async () =>
   assert.equal(sent.length, 7, 'page mutations do not re-request');
 });
 
-test('a second visit within ten minutes is served from the cache', async () => {
+test('every visit asks for the price again: the Ask is never cached', async () => {
   const bg = await startBackground();
   await openOrders(bg);
   const first = bg.requests.filter((r) => r.url.includes('/696683/')).length;
+  assert.equal(first, 1);
   await openOrders(bg);
-  assert.equal(bg.requests.filter((r) => r.url.includes('/696683/')).length, first);
+  assert.equal(bg.requests.filter((r) => r.url.includes('/696683/')).length, 2);
 });
 
 test('rows added after load (the page redraws when the date range changes) are picked up', async () => {

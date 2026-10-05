@@ -269,3 +269,19 @@ test('the total does not call a price being retried "no price", and says some ar
   ]);
   assert.match(mixed.querySelector(`.${TOTAL_CLASS}__detail`).textContent, /2 still loading \(1 being retried\)/);
 });
+
+test('the Ask on an order links to the listing it describes, when the listing has an address', () => {
+  const url = 'https://www.tcgplayer.com/product/535952?seller=d8035033&Condition=Near+Mint&Printing=Holofoil&Language=English&page=1';
+  const box = renderNow(page(), { paid: 13.99, result: ok(9.32, { url }) });
+  const link = box.querySelector(`.${NOW_CLASS}__price a`);
+  assert.equal(link.href, url);
+  assert.equal(link.textContent, box.querySelector(`.${NOW_CLASS}__price`).textContent);
+  assert.match(link.textContent, /^Ask \$/);
+  assert.equal(link.target, '_blank');
+  assert.match(link.rel, /noopener/);
+  for (const bad of [undefined, '', 'javascript:alert(1)', 'https://evil.example/product/1?seller=a']) {
+    const plain = renderNow(page(), { paid: 13.99, result: ok(9.32, { url: bad }) });
+    assert.equal(plain.querySelector('a'), null, String(bad));
+    assert.match(plain.querySelector(`.${NOW_CLASS}__price`).textContent, /^Ask \$/);
+  }
+});

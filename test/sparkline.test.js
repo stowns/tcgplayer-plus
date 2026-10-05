@@ -96,3 +96,50 @@ test('real data: an outlier-filtered series draws inside its bounds', () => {
   assert.ok(g.min > 60, `nor the $13.05 junk day (min ${g.min})`);
   assert.ok(g.points.every((p) => p.y >= 3 && p.y <= 27));
 });
+
+// ---- the periods a trend compares, shaded ---------------------------------------------
+
+test('no periods are shaded unless asked for', () => {
+  assert.deepEqual(buildSparkline(S([['01', 80], ['30', 90]]), OPTS).bands, []);
+  assert.deepEqual(buildSparkline([], { ...OPTS, highlightDays: 7 }).bands, []);
+  for (const bad of [0, -1, NaN, 'x']) assert.deepEqual(buildSparkline(S([['30', 90]]), { ...OPTS, highlightDays: bad }).bands, [], String(bad));
+});
+
+test('the newest N days and the N before are two strips that meet, ending at the right edge', () => {
+  const g = buildSparkline(S([['01', 80], ['30', 90]]), { ...OPTS, highlightDays: 7 });
+  const [prior, recent] = g.bands;
+  assert.deepEqual([prior.name, recent.name], ['prior', 'recent']);
+  assert.ok(Math.abs(prior.x + prior.width - recent.x) < 0.02, 'they meet');
+  assert.ok(Math.abs(prior.width - recent.width) < 0.5, 'and are the same length');
+  // The newest day sits at x = 97; its strip runs half a day past it.
+  assert.ok(recent.x + recent.width > 97 && recent.x + recent.width <= 100);
+  // Seven of twenty-nine day-steps across 94 units.
+  assert.ok(Math.abs(recent.width - (7 / 29) * 94) < 0.05, String(recent.width));
+});
+
+test('one day is still a visible strip, and fourteen days twice over stay inside the drawing', () => {
+  const one = buildSparkline(S([['29', 80], ['30', 90]]), { ...OPTS, highlightDays: 1 }).bands;
+  assert.ok(one[1].width > 3, String(one[1].width));
+  const wide = buildSparkline(S([['01', 80], ['30', 90]]), { ...OPTS, highlightDays: 14 }).bands;
+  for (const b of wide) assert.ok(b.x >= 0 && b.x + b.width <= 100.01, JSON.stringify(b));
+});
+
+test('the right edge can be a day later than the last sale, so the strips line up with the trend', () => {
+  const series = S([['20', 80], ['28', 90]]);
+  const loose = buildSparkline(series, OPTS);
+  const anchored = buildSparkline(series, { ...OPTS, endDate: '2026-09-30' });
+  assert.equal(loose.end.x, 97, 'without it, the last sale is the right edge');
+  assert.ok(anchored.end.x < 97, 'with it, the last sale sits two days in');
+  assert.equal(buildSparkline(series, { ...OPTS, endDate: 'junk' }).end.x, 97, 'a bad date is ignored');
+});
+
+test('renderSparkline draws the strips behind the line and names them', () => {
+  const d = new JSDOM('<body></body>').window.document;
+  const svg = renderSparkline(d, S([['01', 80], ['15', 70], ['30', 90]]), { ...OPTS, highlightDays: 1 });
+  const kids = [...svg.children].map((n) => n.tagName);
+  assert.deepEqual(kids, ['rect', 'rect', 'path', 'circle']);
+  assert.deepEqual([...svg.querySelectorAll('rect')].map((r) => r.getAttribute('class')), ['sparkline__band sparkline__band--prior', 'sparkline__band sparkline__band--recent']);
+  assert.ok(Number(svg.querySelector('.sparkline__band--recent').getAttribute('fill-opacity')) > Number(svg.querySelector('.sparkline__band--prior').getAttribute('fill-opacity')));
+  assert.match(svg.getAttribute('aria-label'), /Shaded: the last 1 day, and the 1 before$/);
+  assert.doesNotMatch(renderSparkline(d, S([['01', 80], ['30', 90]]), OPTS).getAttribute('aria-label'), /Shaded/);
+});

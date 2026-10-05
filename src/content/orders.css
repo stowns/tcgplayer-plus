@@ -32,3 +32,4 @@
 .ptcg-total--lower { border-left-color: #c62828; }
 .ptcg-total--lower .ptcg-total__figure { color: #c62828; }
 .ptcg-total--unknown .ptcg-total__figure { font-size: 14px; font-weight: 400; font-style: italic; color: #777; }
+.ptcg-now__link { color: inherit; text-decoration: underline; }

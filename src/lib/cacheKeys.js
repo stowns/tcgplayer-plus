@@ -6,8 +6,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/** `tr:` price trends, `ls:` current listing prices. */
-export const CACHE_PREFIXES = ['tr:', 'ls:'];
+/** `tr:` price trends. The Ask is never cached, so it is not here. */
+export const CACHE_PREFIXES = ['tr:'];
 
 /** Remove every cached lookup from `storage`; returns how many were removed. */
 export async function clearCachedLookups(storage) {

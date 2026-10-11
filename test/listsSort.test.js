@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SORTS, DEFAULT_SORT, parseSort, sortValue, sortItems, needsHistory, needsAsk, askKey, defaultDirection, directionLabel,
+  SORTS, DEFAULT_SORT, parseSort, sortValue, sortItems, needsHistory, needsAsk, askKey, defaultDirection, directionLabel, watchCondition, askQuery,
 } from '../src/lib/listsSort.js';
 
 const item = (key, extra = {}) => ({
@@ -31,10 +31,37 @@ test('volatility needs each card\'s price history, and ask needs each card\'s ch
   assert.equal(needsHistory('added') || needsAsk('added'), false);
 });
 
-test('an ask is looked up per product and condition, so two conditions of one card are two asks', () => {
+test('a watched card is priced in Near Mint, in the printing it was saved with, whatever listing was featured that day', () => {
+  const saved = (condition) => item('1', { priceAtSave: condition === undefined ? null : { condition } });
+  assert.equal(watchCondition(saved('Near Mint Holofoil')), 'Near Mint Holofoil');
+  assert.equal(watchCondition(saved('Damaged Holofoil')), 'Near Mint Holofoil', 'a damaged copy was the featured listing when it was saved');
+  assert.equal(watchCondition(saved('Lightly Played 1st Edition Holofoil')), 'Near Mint 1st Edition Holofoil');
+  assert.equal(watchCondition(saved('Moderately Played')), 'Near Mint');
+  assert.equal(watchCondition(saved('')), 'Near Mint', 'the page had not shown a listing yet');
+  assert.equal(watchCondition(saved(undefined)), 'Near Mint');
+  assert.equal(watchCondition(saved('Holofoil')), 'Near Mint Holofoil', 'a printing with no condition');
+  assert.equal(watchCondition(null), 'Near Mint');
+});
+
+test('a sealed product keeps Unopened, the only condition it comes in', () => {
+  assert.equal(watchCondition(item('1', { priceAtSave: { condition: 'Unopened' } })), 'Unopened');
+});
+
+test('so the same card always has the same ask key, and is asked the same question', () => {
   assert.equal(askKey(item('1')), '1|near mint|holofoil');
-  assert.notEqual(askKey(item('1')), askKey(item('1', { priceAtSave: { condition: 'Lightly Played Holofoil' } })));
-  assert.equal(askKey(item('7', { priceAtSave: null })), '7||');
+  assert.equal(askKey(item('1', { priceAtSave: { condition: 'Damaged Holofoil' } })), askKey(item('1')), 'not a different Ask for a damaged day');
+  assert.equal(askKey(item('7', { priceAtSave: null })), '7|near mint|');
+  assert.equal(askKey(item('9', { priceAtSave: { condition: 'Unopened' } })), '9|unopened|');
+
+  assert.deepEqual(askQuery(item('1')), { productId: '1', condition: 'Near Mint Holofoil' });
+  assert.deepEqual(askQuery(item('1', { priceAtSave: { condition: 'Damaged Holofoil' } })), { productId: '1', condition: 'Near Mint Holofoil' });
+  assert.deepEqual(askQuery(item('9', { priceAtSave: { condition: 'Unopened' } })), { productId: '9', condition: 'Unopened' });
+});
+
+test('with no condition on record the product may be sealed, so the question says to look there too', () => {
+  assert.deepEqual(askQuery(item('7', { priceAtSave: null })), { productId: '7', condition: 'Near Mint', orSealed: true });
+  assert.deepEqual(askQuery(item('7', { priceAtSave: { condition: 'Holofoil' } })), { productId: '7', condition: 'Near Mint Holofoil', orSealed: true });
+  assert.equal('orSealed' in askQuery(item('7', { priceAtSave: { condition: 'Damaged Holofoil' } })), false, 'a card: it has conditions');
 });
 
 test('date added sorts newest first, and oldest first when reversed', () => {

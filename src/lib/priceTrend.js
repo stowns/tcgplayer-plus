@@ -35,10 +35,18 @@ export const TREND = {
   /** Window lengths tried in order for the headline: recent N days vs the N days before. */
   WINDOWS: [7, 14],
   /**
-   * The durations a person can choose to see, each worked out the same way. All
-   * fit inside the thirty daily points TCGplayer gives; nothing finer than a day exists.
+   * The durations a person can choose to see, each worked out the same way: the
+   * newest N days against the N before.
    */
-  DURATIONS: [1, 3, 7, 14],
+  DURATIONS: [1, 3, 7, 14, 30],
+  /** Those that fit inside the thirty daily points of TCGplayer's month of history. */
+  DAILY_DURATIONS: [1, 3, 7, 14],
+  /**
+   * Thirty days against thirty needs sixty, which the month does not hold. It is
+   * worked out from the 90-day history instead (three-day steps), fetched only
+   * when it is asked for.
+   */
+  LONG_DURATION: 30,
   DEFAULT_DURATIONS: [7],
   /**
    * The newest few sale-days are compared with the rest of the recent window to
@@ -173,9 +181,9 @@ export function computeTrend(days) {
     return n > newest - to && n <= newest - from;
   });
 
-  // Every duration on offer, so choosing which to show never needs the history again.
+  // Every duration the month can give, so choosing among them never needs the history again.
   const windows = {};
-  for (const length of TREND.DURATIONS) windows[length] = windowTrend(between, length);
+  for (const length of TREND.DAILY_DURATIONS) windows[length] = windowTrend(between, length);
   const shared = { ...base, windows, asOf: all[all.length - 1].date };
 
   let lastTried = null;
@@ -194,6 +202,32 @@ export function computeTrend(days) {
   };
 }
 
+/**
+ * The 30-day trend, from the 90-day history: its newest thirty days against the
+ * thirty before. That history comes in three-day steps, so a "day with sales" here
+ * is a step with sales. `series` is the 90 days for the chart, outlier steps left out.
+ * @param {ReturnType<typeof normalizeBuckets>} steps oldest first
+ * @returns {{window: object, series: {date: string, price: number}[], asOf: string}|null} null when nothing sold
+ */
+export function computeLongTrend(steps) {
+  const all = Array.isArray(steps) ? steps.filter((d) => d && toDay(d.date)) : [];
+  const sold = all.filter(hadSales);
+  if (sold.length === 0) return null;
+  const newest = dayNumber(all[all.length - 1].date);
+  const between = (from, to) => all.filter((d) => {
+    const n = dayNumber(d.date);
+    return n > newest - to && n <= newest - from;
+  });
+  return {
+    window: windowTrend(between, TREND.LONG_DURATION),
+    series: withoutOutliers(sold).kept.map((d) => ({ date: d.date, price: d.price })),
+    asOf: all[all.length - 1].date,
+  };
+}
+
+/** Does this trend already hold its 30-day window? */
+export const hasLongTrend = (trend) => Boolean(trend && trend.windows && trend.windows[TREND.LONG_DURATION]);
+
 /** The durations asked for that exist, longest first; the default when none do. */
 export function cleanDurations(durations) {
   const wanted = [...new Set((Array.isArray(durations) ? durations : []).map(Number))]
@@ -207,7 +241,7 @@ export function cleanDurations(durations) {
  * A quiet card's 7 days widen to 14, as the headline always has, unless 14 has
  * its own line. Empty when there is nothing to compare (no data, or unavailable).
  * @returns {{days: number, shownDays: number, direction: string, pct: number|null,
- *   recent: object|null, prior: object|null, reason: string, headline: boolean}[]}
+ *   recent: object|null, prior: object|null, reason: 'ok'|'not-enough-sales'|'pending'|'unavailable', headline: boolean}[]}
  */
 export function selectTrendLines(trend, durations) {
   if (!trend) return [];
@@ -221,15 +255,15 @@ export function selectTrendLines(trend, durations) {
   }
   const chosen = cleanDurations(durations);
   return chosen.map((days, index) => {
-    let found = trend.windows[days];
-    if (!found) return null;
+    // Asked for but not here yet (the 90-day history is fetched separately): say so, rather than drop the line.
+    let found = trend.windows[days] || { windowDays: days, direction: 'unknown', pct: null, recent: null, prior: null, reason: 'pending' };
     const wider = trend.windows[14];
     if (days === 7 && found.reason !== 'ok' && !chosen.includes(14) && wider && wider.reason === 'ok') found = wider;
     return {
       days, shownDays: found.windowDays, direction: found.direction, pct: found.pct,
       recent: found.recent, prior: found.prior, reason: found.reason, headline: index === 0,
     };
-  }).filter(Boolean);
+  });
 }
 
 /** A card needs at least this many sale-days in the chart before its swings mean anything. */

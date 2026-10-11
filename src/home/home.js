@@ -17,6 +17,7 @@ import {
   loadSettings, updateSettings, clampInterval, shouldWarnAboutRate, SETTINGS_KEY,
 } from '../lib/settings.js';
 import { checkTargets, runExclusive } from '../lib/priceWatch.js';
+import { askQuery } from '../lib/listsSort.js';
 import { sendNotification } from './notify.js';
 
 const VIEWS = { lists, orders, settings: settingsView };
@@ -98,10 +99,8 @@ const seconds = document.getElementById('autoRefreshSeconds');
 const next = document.getElementById('autoRefreshNext');
 const rateWarning = document.getElementById('rateWarning');
 
-const lookupAsk = (item) => api.runtime.sendMessage({
-  type: 'listing-price',
-  item: { productId: item.productId, condition: item.priceAtSave ? item.priceAtSave.condition : '' },
-});
+// The same question the Watch Lists view asks, so a target is judged on the Ask that is shown.
+const lookupAsk = (item) => api.runtime.sendMessage({ type: 'listing-price', item: askQuery(item) });
 
 /** Check every price target, unless another dashboard tab is already doing it. */
 function watchTargets() {

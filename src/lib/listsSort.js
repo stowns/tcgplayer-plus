@@ -8,6 +8,7 @@
 import { volatility } from './priceTrend.js';
 import { landedNow } from './orderCost.js';
 import { listingCacheKey } from './listingLookup.js';
+import { splitConditionVariant } from './tcgplayerHistory.js';
 
 /** `dir` is what you get when you first choose the sort: newest, dearest, most volatile first. */
 export const SORTS = [
@@ -25,11 +26,35 @@ export const DEFAULT_SORT = { key: 'added', dir: 'desc' };
 export const needsHistory = (key) => key === 'volatility';
 export const needsAsk = (key) => key === 'ask';
 
+/**
+ * The condition a watched card is priced in: Near Mint, in the printing it was saved
+ * with ("Near Mint Holofoil"). What was recorded when it was saved is whatever
+ * TCGplayer's featured listing happened to be that day, a damaged copy as easily as
+ * a mint one, or nothing if the page had not finished loading; following that would
+ * compare one day's damaged copy with the next day's mint one. Sealed products keep
+ * "Unopened", the only condition they come in.
+ */
+export function watchCondition(item) {
+  const saved = item && item.priceAtSave ? item.priceAtSave.condition : '';
+  const { condition, variant } = splitConditionVariant(saved);
+  if (condition === 'Unopened') return ['Unopened', variant].filter(Boolean).join(' ');
+  return ['Near Mint', variant].filter(Boolean).join(' ');
+}
+
+/**
+ * What to ask the background for a watched card's Ask. With no condition on record
+ * the product may be sealed, which has no Near Mint; `orSealed` says to look there
+ * when Near Mint has nothing listed.
+ */
+export function askQuery(item) {
+  const saved = item && item.priceAtSave ? item.priceAtSave.condition : '';
+  const query = { productId: item.productId, condition: watchCondition(item) };
+  if (!splitConditionVariant(saved).condition) query.orSealed = true;
+  return query;
+}
+
 /** The key under which a card's ask is looked up and shared. */
-export const askKey = (item) => listingCacheKey({
-  productId: item.productId,
-  condition: item.priceAtSave ? item.priceAtSave.condition : '',
-});
+export const askKey = (item) => listingCacheKey({ productId: item.productId, condition: watchCondition(item) });
 
 /** Read a saved choice defensively; anything unexpected is the default. */
 export function parseSort(raw) {

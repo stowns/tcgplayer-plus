@@ -62,7 +62,8 @@ export function mount(root) {
   trendStatus.setAttribute('role', 'status');
   trendSection.append(trendChoices, trendStatus, make('p', { className: 'settings-trends__note' },
     `A trend needs at least ${TREND.MIN_SALES} sales in each period, so short ones often read "not enough sales" for cards that sell slowly. `
-    + 'TCGplayer reports sales by the day, and today\u2019s are still coming in, so the 1-day trend moves the most.'));
+    + 'TCGplayer reports sales by the day, and today\u2019s are still coming in, so the 1-day trend moves the most. '
+    + 'The 30-day trend needs a longer history, so it asks TCGplayer for one more thing per card.'));
 
   function drawTrendChoices(settings) {
     for (const [days, box] of trendBoxes) box.checked = settings.trendDurations.includes(days);

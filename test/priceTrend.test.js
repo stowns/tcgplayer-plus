@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeBuckets, computeTrend, TREND, volatility, currentPrice, MIN_VOLATILITY_POINTS, selectTrendLines, cleanDurations,
+  computeLongTrend, hasLongTrend,
 } from '../src/lib/priceTrend.js';
 import { parseHistory } from '../src/lib/tcgplayerHistory.js';
 import { PIKACHU_HISTORY, GENESECT_HISTORY, historyRow } from './fixtures/tcgplayerHistory.js';
@@ -250,7 +251,9 @@ test('no current price without any sales', () => {
 const stepped = (today, yesterday, rest = [10, 6]) => normalizeBuckets(daily([today, yesterday, ...Array.from({ length: 28 }, () => rest)]));
 
 test('every duration on offer is worked out, each from its own two periods', () => {
-  assert.deepEqual(TREND.DURATIONS, [1, 3, 7, 14]);
+  assert.deepEqual(TREND.DURATIONS, [1, 3, 7, 14, 30]);
+  assert.deepEqual(TREND.DAILY_DURATIONS, [1, 3, 7, 14], 'what a month of daily points can give');
+  assert.equal(TREND.LONG_DURATION, 30);
   assert.deepEqual(TREND.DEFAULT_DURATIONS, [7]);
   const t = computeTrend(stepped([12, 6], [10, 6]));
   assert.deepEqual(Object.keys(t.windows).map(Number), [1, 3, 7, 14]);
@@ -295,7 +298,8 @@ test('a card with no sales has no windows to show', () => {
 test('the durations asked for are cleaned: known ones only, once each, longest first, never none', () => {
   assert.deepEqual(cleanDurations([1, 7]), [7, 1]);
   assert.deepEqual(cleanDurations(['3', 14, 14, 2, 'x', null]), [14, 3]);
-  for (const bad of [[], undefined, null, 'seven', [30, 0]]) assert.deepEqual(cleanDurations(bad), [7]);
+  for (const bad of [[], undefined, null, 'seven', [60, 0]]) assert.deepEqual(cleanDurations(bad), [7]);
+  assert.deepEqual(cleanDurations([7, 30]), [30, 7]);
   assert.notEqual(cleanDurations(null), TREND.DEFAULT_DURATIONS, 'a copy, so nothing can change the default');
 });
 
@@ -328,4 +332,49 @@ test('a trend made without windows still gives its headline line', () => {
 
 test('the rules version changed with the windows, so cached trends are worked out again', () => {
   assert.equal(TREND.VERSION, 3);
+});
+
+// ---- thirty days, from the 90-day history ---------------------------------------------
+
+/** Ninety days in three-day steps ending 30 Sep, newest first: [price, transactions] per step. */
+function steps(pairs) {
+  const end = Date.UTC(2026, 8, 30);
+  return normalizeBuckets(pairs.map(([price, tx], i) => {
+    const d = new Date(end - i * 3 * 86400000).toISOString().slice(5, 10);
+    return historyRow([d, price, tx, tx, price, price]);
+  }));
+}
+
+test('thirty days against thirty comes from the 90-day history: ten steps against the ten before', () => {
+  const long = computeLongTrend(steps([...flatRun(12, 6, 10), ...flatRun(10, 6, 10), ...flatRun(50, 6, 10)]));
+  assert.equal(long.window.windowDays, 30);
+  assert.deepEqual([long.window.direction, long.window.pct, long.window.reason], ['up', 0.2, 'ok']);
+  assert.deepEqual([long.window.recent.days, long.window.prior.days], [10, 10], 'the oldest thirty days are not part of it');
+  assert.equal(long.asOf, '2026-09-30');
+  assert.equal(long.series.length, 20, 'for the chart, with the outlying steps at 50 left out');
+  assert.deepEqual(long.series.at(-1), { date: '2026-09-30', price: 12 });
+});
+
+test('a month of daily points cannot give thirty days, so the month\'s trend has no such window', () => {
+  const month = computeTrend(pikachu());
+  assert.equal(month.windows[30], undefined);
+  assert.equal(hasLongTrend(month), false);
+  assert.equal(hasLongTrend({ ...month, windows: { ...month.windows, 30: { reason: 'ok' } } }), true);
+  assert.equal(hasLongTrend(null), false);
+  assert.equal(hasLongTrend({}), false);
+});
+
+test('too few sales in either thirty days is said, and no sales at all gives nothing', () => {
+  const thin = computeLongTrend(steps([[12, 2], [12, 2], ...flatRun(10, 0, 8), ...flatRun(10, 6, 10)]));
+  assert.deepEqual([thin.window.reason, thin.window.direction, thin.window.pct], ['not-enough-sales', 'unknown', null]);
+  assert.equal(computeLongTrend(steps(flatRun(10, 0, 30))), null);
+  assert.equal(computeLongTrend(null), null);
+});
+
+test('a chosen duration that has not arrived yet is a line saying so, not a missing line', () => {
+  const month = computeTrend(pikachu());
+  const lines = selectTrendLines(month, [30, 7]);
+  assert.deepEqual(lines.map((l) => [l.days, l.shownDays, l.reason, l.direction, l.headline]), [[30, 30, 'pending', 'unknown', true], [7, 7, 'ok', 'down', false]]);
+  const failed = { ...month, windows: { ...month.windows, 30: { windowDays: 30, direction: 'unknown', pct: null, reason: 'unavailable' } } };
+  assert.equal(selectTrendLines(failed, [30])[0].reason, 'unavailable');
 });

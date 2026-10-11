@@ -114,6 +114,30 @@ Two different numbers are kept apart on purpose:
   of TCGplayer's choosing rather than the cheapest. In Order History the Ask
   itself is the link.
 
+**Always Near Mint.** A watched card's Ask, its trend and its price target all
+follow **Near Mint**, in the printing it was saved with (Near Mint Holofoil,
+say). The condition recorded when it was saved is not used: that is whatever
+TCGplayer's featured listing happened to be that day, a damaged copy as easily
+as a mint one, and following it would set one day's damaged copy against the
+next day's mint one. A card with no Near Mint copy listed reads "Ask: none
+listed" rather than showing a played one. Sealed products are priced as
+Unopened, the only condition they come in. (Order History is different: there
+the Ask is for the condition you bought.)
+
+**How the Ask has moved.** Every Ask that is looked up is compared with the
+different one recorded before it, and drawn like a trend:
+"▼ −4.4% Ask $85.99 ($85.99, free shipping)" when the cheapest listing is now
+lower (red), "▲" when it is higher (green). While the Ask has not moved,
+nothing is added. A card that is not selling has no sales for the price trend to
+move on, but its Ask still rises and falls, and that is news about the market.
+
+- Only two prices are kept for a card and condition, in this browser: the
+  current Ask and the one before it, as price plus shipping, to the cent. The
+  mark stays until the Ask moves again; hover the arrow for the previous Ask.
+- It is what the dashboard saw when it looked: nothing is recorded while no
+  page is asking. **Clear price cache** does not remove it; the record of a card
+  nobody has looked at for six months is dropped.
+
 The trend chart's "Recent sales" figure is a third thing again: what the card
 has just been selling for, **before shipping** (TCGplayer's sales history
 carries no shipping). It is labelled "Recent sales" with "before shipping"
@@ -131,9 +155,27 @@ order you chose.
 
 The list you chose and the page size are remembered in this browser. Changing
 the list, the page size or a sort returns to page 1, and a new list is shown as
-soon as it is made. Prices are looked up only for the cards on the page you are
-looking at; sorting by Ask or Volatility still loads every card in the list
-shown, so the order is right across pages.
+soon as it is made. Trends are looked up only for the cards on the page you are
+looking at; sorting by Volatility loads them for every card in the list shown,
+so the order is right across pages. The Ask is looked up for every card in the
+list shown, for its total (below).
+
+### What the whole list would cost
+
+Beside a list's card count is **Total Ask**: the sum of every card's Ask, each
+at its own cheapest listing with shipping. It is what buying one of everything
+on the list would cost today.
+
+- It covers the whole list, not only the page on show, so opening a list looks
+  up the Ask of every card on it. The cards on screen go first; the rest are
+  asked for one at a time, and the total fills in as they arrive, saying how far
+  it has got: "Total Ask $412.50 (38 of 60 cards, checking 22…)".
+- A card with nothing listed is left out and counted: "(59 of 60 cards, 1 with
+  no Ask)".
+- Each card is priced on its own. Bought together, TCGplayer may combine
+  shipping from one seller, so a real cart can come to less.
+- Auto-refresh re-asks for every card on the list, so a long list refreshed
+  often is many requests to TCGplayer.
 
 ### Sorting
 
@@ -174,14 +216,22 @@ Nor does it use the single latest sale, which is one noisy point (five sales in
 eight hours spanned $71-$87 on one card).
 
 **Several durations.** The **Settings** tab chooses which trends each card
-shows: **1, 3, 7 and 14 days**, any combination, 7 days to begin with. Each gets
-its own line, longest first, coloured by its own direction. All of them come
-from the 30 days of history already fetched, so adding one asks TCGplayer
-nothing more. TCGplayer reports sales by the day, and today's are still coming
-in, so "1 day" (today against yesterday) moves the most.
+shows: **1, 3, 7, 14 and 30 days**, any combination, 7 days to begin with. Each
+gets its own line, longest first, coloured by its own direction. Everything up
+to 14 days comes from the 30 days of history already fetched, so adding one of
+those asks TCGplayer nothing more. TCGplayer reports sales by the day, and
+today's are still coming in, so "1 day" (today against yesterday) moves the
+most.
+
+**30 days costs one more request per card.** Thirty days against the thirty
+before needs sixty days of sales, and the month does not hold them. It is
+worked out from TCGplayer's 90-day history instead, which comes in three-day
+steps, and that is only fetched while 30 days is ticked. Its line reads
+"30 days: checking…" until it arrives.
 
 **The chart is opened by clicking a line.** It shows the last 30 days of sales
-with the two periods that line compares shaded, the newer one darker. Click the
+(90 for the 30-day line) with the two periods that line compares shaded, the
+newer one darker. Click the
 line again to close it. Charts are closed to begin with, because one chart under
 several percentages would not say which of them it belonged to.
 

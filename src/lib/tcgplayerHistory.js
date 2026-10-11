@@ -14,6 +14,7 @@ import { normalizeBuckets } from './priceTrend.js';
 const HOST = 'https://infinite-api.tcgplayer.com';
 const CONDITIONS = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged', 'Unopened'];
 
+/** `month` is thirty daily points; `quarter` is ninety days in three-day steps. */
 export function historyUrl(productId, range = 'month') {
   if (!/^\d+$/.test(String(productId ?? ''))) throw new Error(`Not a TCGplayer product id: ${productId}`);
   return `${HOST}/price/history/${productId}/detailed?range=${encodeURIComponent(range)}`;

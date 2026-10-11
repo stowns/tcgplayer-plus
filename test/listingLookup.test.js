@@ -83,3 +83,33 @@ test('each answer is stamped with when it was fetched', async () => {
   assert.equal((await lookupListing(ITEM, { postJson, now: () => 1000 })).checkedAt, 1000);
   assert.equal((await lookupListing(ITEM, { postJson, now: () => 9999 })).checkedAt, 9999);
 });
+
+// ---- a product that may be sealed ---------------------------------------------------------
+
+test('when Near Mint has nothing listed and the product may be sealed, unopened copies are looked for', async () => {
+  const calls = [];
+  const postJson = async (url, body) => { calls.push(body.filters.term); return calls.length === 1 ? NO_LISTINGS : LAPRAS_LISTINGS; };
+  const result = await lookupListing({ productId: '528039', condition: 'Near Mint', orSealed: true }, { postJson });
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(calls.map((t) => t.condition), [['Near Mint'], ['Unopened']]);
+});
+
+test('that second look is not made when Near Mint has a listing, or when the product is known to be a card', async () => {
+  let calls = 0;
+  await lookupListing({ productId: '1', condition: 'Near Mint', orSealed: true }, { postJson: async () => { calls += 1; return LAPRAS_LISTINGS; } });
+  assert.equal(calls, 1);
+  calls = 0;
+  const none = await lookupListing({ productId: '1', condition: 'Near Mint Holofoil' }, { postJson: async () => { calls += 1; return NO_LISTINGS; }, now: () => 5 });
+  assert.equal(calls, 1);
+  assert.deepEqual(none, { status: 'none', checkedAt: 5 }, 'a card with no Near Mint copies has no Ask, not a damaged one');
+});
+
+test('nothing listed either way is "none", and a failure on the second look is unavailable', async () => {
+  const item = { productId: '1', condition: 'Near Mint Holofoil', orSealed: true };
+  const terms = [];
+  assert.equal((await lookupListing(item, { postJson: async (url, body) => { terms.push(body.filters.term); return NO_LISTINGS; } })).status, 'none');
+  assert.deepEqual(terms[1].printing, ['Holofoil'], 'the printing is kept');
+  let calls = 0;
+  const failing = async () => { calls += 1; if (calls === 2) throw new Error('503'); return NO_LISTINGS; };
+  assert.deepEqual(await lookupListing(item, { postJson: failing }), { status: 'unavailable' });
+});

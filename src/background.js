@@ -13,6 +13,7 @@ import { createThrottle } from './lib/throttle.js';
 import { createClient } from './lib/httpClient.js';
 import { lookupTrend, trendCacheKey, TREND_CACHE_TTL_MS } from './lib/trendLookup.js';
 import { lookupListing, listingCacheKey } from './lib/listingLookup.js';
+import { noteAsk, staleAskKeys } from './lib/askHistory.js';
 import { api, onMessage } from './lib/runtime.js';
 
 const storage = api.storage.local;
@@ -101,15 +102,28 @@ const lookupTrendOnce = singleFlight((key, item) => untilDone('price-trend', key
 // Never cached: a price target is only as good as the freshness of the price it is
 // compared with. Lookups of the same card that overlap still share one request.
 
+// Every Ask that comes back is noted, so the next one can be shown against it. A card
+// that is not selling has no sales for a trend to move on, but its Ask still moves.
+async function withChange(key, ask) {
+  if (!ask || ask.status !== 'ok') return ask;
+  try {
+    return { ...ask, change: await noteAsk(storage, key, ask) };
+  } catch {
+    // The price is the answer; failing to write it down must not lose it.
+    return ask;
+  }
+}
+
 const lookupListingOnce = singleFlight((key, item) => untilDone('listing-price', key, lookupListing(item, {
   postJson: (url, body) => client.postJson(url, body, { onRetry: retryNotifier('listing-price', key) }),
-})));
+}).then((ask) => withChange(key, ask))));
 
 // Storage written under the `ls:` prefix holds Asks that are no longer read; clear any that are there.
 Promise.resolve()
   .then(() => storage.get(null))
   .then((all) => {
-    const stale = Object.keys(all || {}).filter((key) => key.startsWith('ls:'));
+    // And the Ask records of cards nobody has looked at in months.
+    const stale = [...Object.keys(all || {}).filter((key) => key.startsWith('ls:')), ...staleAskKeys(all)];
     return stale.length ? storage.remove(stale) : undefined;
   })
   .catch(() => {});
@@ -121,7 +135,9 @@ onMessage((message, sender) => {
   if (!message) return undefined;
   if (message.type === 'price-trend') {
     const item = message.item || {};
-    const key = trendCacheKey(item);
+    // With and without the 30-day window are different lookups (one request or two), so they
+    // are not shared; both read and write the same cache entry.
+    const key = `${trendCacheKey(item)}${item.long ? '|long' : ''}`;
     const stop = watch('price-trend', key, sender, message.ref);
     return lookupTrendOnce(key, item).catch(() => ({
       direction: 'unknown', pct: null, windowDays: null, recent: null, prior: null,

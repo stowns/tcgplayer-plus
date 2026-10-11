@@ -5,16 +5,19 @@
  */
 
 import {
-  renderLists, exportJson, updateTrend, updateAsk, updateTargetBlock, trendOptionsFor,
+  renderLists, exportJson, updateTrend, updateAsk, updateTargetBlock, trendOptionsFor, updateListTotal,
 } from '../../lib/listsPageView.js';
 import { loadLists, saveLists } from '../../lib/listsStorage.js';
 import {
   createList, renameList, deleteList, removeItem, setListSort, listSort,
 } from '../../lib/lists.js';
 import { pageOf, parsePageSize, resolveSelection } from '../../lib/listsPage.js';
-import { needsHistory, needsAsk, defaultDirection, askKey } from '../../lib/listsSort.js';
+import {
+  needsHistory, needsAsk, defaultDirection, askKey, askQuery, watchCondition,
+} from '../../lib/listsSort.js';
 import { api } from '../../lib/runtime.js';
 import { retryingState, isSettled } from '../../lib/retryState.js';
+import { TREND, hasLongTrend } from '../../lib/priceTrend.js';
 import {
   loadTargets, saveTargets, setTarget, removeTarget, pruneTargets, TARGETS_KEY,
 } from '../../lib/targets.js';
@@ -107,6 +110,7 @@ export function mount(root) {
       drawTrend(key);
     },
   };
+  const wantsLong = () => (trendView.durations || []).includes(TREND.LONG_DURATION);
   const drawTrend = (key) => updateTrend(container, key, trends[key] || null, trendOptionsFor(key, trendView));
 
   async function readSettings() {
@@ -116,7 +120,16 @@ export function mount(root) {
     const before = String(trendView.durations);
     trendView.durations = settings.trendDurations;
     // The setting changed while the list is showing: redraw the trends, nothing else.
-    if (before !== 'undefined' && before !== String(trendView.durations)) for (const key of itemsByKey.keys()) drawTrend(key);
+    if (before !== 'undefined' && before !== String(trendView.durations)) {
+      for (const key of itemsByKey.keys()) {
+        drawTrend(key);
+        // 30 days was just chosen: the trends already here were fetched without it.
+        if (wantsLong() && isSettled(trends[key]) && trends[key].windows && !hasLongTrend(trends[key])) {
+          inflight.delete(key);
+          requestTrend(key);
+        }
+      }
+    }
     noticeTopic.textContent = settings.notifications.topic;
     notice.hidden = !shouldShowSubscribeNotice(settings, targets);
   }
@@ -251,6 +264,7 @@ export function mount(root) {
   const askInflight = new Map();
   let itemsByKey = new Map();
   let itemsByAskKey = new Map();
+  let shownList = null;      // the list on show, whose total is kept up as its Asks arrive
   let mounted = true;
 
   function requestTrend(key) {
@@ -266,7 +280,10 @@ export function mount(root) {
           item: {
             productId: item.productId,
             language: item.language,
-            condition: item.priceAtSave ? item.priceAtSave.condition : '',
+            // Near Mint, as the Ask is: see watchCondition.
+            condition: watchCondition(item),
+            // The 30-day trend needs a second, longer history; only asked for when it is shown.
+            long: wantsLong(),
           },
         });
       } catch {
@@ -291,13 +308,16 @@ export function mount(root) {
         result = await api.runtime.sendMessage({
           type: 'listing-price',
           ref: key,
-          item: { productId: item.productId, condition: item.priceAtSave ? item.priceAtSave.condition : '' },
+          item: askQuery(item),
         });
       } catch {
         result = null;
       }
       asks[key] = result && result.status ? result : { status: 'unavailable' };
-      if (mounted) updateAsk(container, key, asks[key]);
+      if (mounted) {
+        updateAsk(container, key, asks[key]);
+        if (shownList) updateListTotal(container, shownList, asks);
+      }
     })();
     askInflight.set(key, request);
     return request;
@@ -342,6 +362,26 @@ export function mount(root) {
     await draw();
   }
 
+  // The Ask of every card on the list, for its total: the ones further down the page and
+  // on its other pages too. Asked for one at a time, so the cards being looked at are never
+  // stuck in a queue behind the whole list.
+  let totalRun = 0;
+  async function loadWholeListAsks({ again = false, done = new Set() } = {}) {
+    const run = ++totalRun;
+    for (const item of shownList ? shownList.items : []) {
+      if (!mounted || run !== totalRun) return;
+      const key = askKey(item);
+      if (done.has(key)) continue;
+      if (isSettled(asks[key])) {
+        if (!again) continue;
+        // A refresh: ask afresh, keeping what is shown until the new answer arrives.
+        askInflight.delete(key);
+      }
+      done.add(key);
+      await requestAsk(key);
+    }
+  }
+
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
@@ -367,6 +407,10 @@ export function mount(root) {
     for (const row of container.querySelectorAll('.item')) {
       if (!isSettled(trends[row.getAttribute('data-key')]) || !isSettled(asks[row.getAttribute('data-ask-key')])) observer.observe(row);
     }
+    // The list's total needs the Ask of every card on it, not only the ones on this page or
+    // on screen. Trends are still fetched only for cards that scroll into view.
+    shownList = shown || null;
+    loadWholeListAsks();
     loadEverythingForSort(state);
   }
 
@@ -413,19 +457,22 @@ export function mount(root) {
   api.storage.onChanged.addListener(onChanged);
 
   /**
-   * Ask again for the Ask and trend of the cards on the page shown. What is on screen
+   * Ask again for the trend of the cards on the page shown and the Ask of every card on the list. What is on screen
    * stays until the new answer arrives, so nothing flashes back to "checking".
    */
   async function refresh() {
     if (!mounted) return;
     const pending = [];
+    const asked = new Set();
     for (const row of container.querySelectorAll('.item')) {
       const key = row.getAttribute('data-key');
       const ask = row.getAttribute('data-ask-key');
       // Still being asked for the first time: leave that request to finish.
       if (isSettled(trends[key])) { inflight.delete(key); pending.push(requestTrend(key)); }
-      if (isSettled(asks[ask])) { askInflight.delete(ask); pending.push(requestAsk(ask)); }
+      if (isSettled(asks[ask])) { askInflight.delete(ask); pending.push(requestAsk(ask)); asked.add(ask); }
     }
+    // And the Asks of the list's other cards, so its total is all of one moment.
+    pending.push(loadWholeListAsks({ again: true, done: asked }));
     await Promise.all(pending);
     if (!mounted || !pending.length) return;
     // An order that depends on prices may have changed with them.

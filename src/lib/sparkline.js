@@ -78,7 +78,7 @@ export function renderSparkline(doc, series, options) {
   const days = options && options.highlightDays;
   svg.setAttribute(
     'aria-label',
-    `Sold price over the last 30 days, from ${formatMoney(first.price)} to ${formatMoney(last.price)}`
+    `Sold price over the last ${(options && options.spanDays) || 30} days, from ${formatMoney(first.price)} to ${formatMoney(last.price)}`
       + (g.bands.length ? `. Shaded: the last ${days} day${days === 1 ? '' : 's'}, and the ${days} before` : ''),
   );
   for (const band of g.bands) {

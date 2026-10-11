@@ -20,7 +20,8 @@ export function listingCacheKey({ productId, condition } = {}) {
  * The cheapest live listing, asked for afresh every time: a price that is a few
  * minutes old is no use to someone waiting for it to reach a target. Lookups for
  * the same card that overlap are shared by the caller (see background.js).
- * @param {{productId: string, condition?: string}} item
+ * @param {{productId: string, condition?: string, orSealed?: boolean}} item  `orSealed`: when nothing is
+ *   listed in `condition`, look among unopened (sealed) copies too, at the cost of a second request
  * @param {{postJson: (url: string, body: object) => Promise<object>, now?: () => number}} deps
  * @returns {Promise<{status: 'ok', price: number, shipping: number, seller: string, count: number, checkedAt: number}
  *   | {status: 'none', checkedAt: number} | {status: 'unavailable'}>}
@@ -28,15 +29,25 @@ export function listingCacheKey({ productId, condition } = {}) {
 export async function lookupListing(item, deps) {
   if (!item || !/^\d+$/.test(String(item.productId ?? ''))) return { status: 'unavailable' };
 
-  let json;
+  const ask = async (condition) => {
+    const json = await deps.postJson(listingsUrl(item.productId), listingsBody(condition));
+    if (!json || !Array.isArray(json.results)) throw new Error('not the listings feed');
+    return parseLowestListing(json);
+  };
+
+  let lowest;
   try {
-    json = await deps.postJson(listingsUrl(item.productId), listingsBody(item.condition));
+    lowest = await ask(item.condition);
+    // A sealed product has no Near Mint copies; when the caller could not tell which it
+    // is, and nothing came back, look among the unopened ones before saying "none".
+    if (!lowest && item.orSealed) {
+      const { variant } = splitConditionVariant(item.condition);
+      lowest = await ask(['Unopened', variant].filter(Boolean).join(' '));
+    }
   } catch {
     return { status: 'unavailable' };
   }
-  if (!json || !Array.isArray(json.results)) return { status: 'unavailable' };
 
-  const lowest = parseLowestListing(json);
   const checkedAt = (deps.now || Date.now)();
   return lowest ? { status: 'ok', ...lowest, checkedAt } : { status: 'none', checkedAt };
 }

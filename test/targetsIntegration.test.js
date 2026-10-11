@@ -50,7 +50,7 @@ function fakeWorld({ prices = { 696683: [9.32, 1.49] }, ntfyStatus = 200 } = {})
   const world = { prices: { ...prices }, ntfyStatus, ntfy: [], requests: [] };
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, url: '', headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
   world.fetch = async (url, init = {}) => {
-    world.requests.push({ url, method: init.method || 'GET' });
+    world.requests.push({ url, method: init.method || 'GET', body: typeof init.body === 'string' ? init.body : '' });
     if (url === 'https://ntfy.sh/') {
       if (world.ntfyStatus !== 200) return reply(world.ntfyStatus, {});
       world.ntfy.push(JSON.parse(init.body));
@@ -778,12 +778,63 @@ test('Asks left in storage under the old cache prefix are cleared when the backg
   assert.ok(local.data.lists, 'the lists are untouched');
 });
 
-test('no Ask is written to storage', async () => {
+test('no Ask is cached, but each one is recorded so a change can be shown', async () => {
   const world = fakeWorld();
   const bg = await startBackground(world, preset({ settings: ON(5) }));
-  await openDashboard(bg);
+  const page = await openDashboard(bg);
   await until(() => world.asked(696683) >= 3);
   assert.equal(Object.keys(bg.local.data).some((k) => k.startsWith('ls:')), false);
+  const key = Object.keys(bg.local.data).find((k) => k.startsWith('ah:696683|'));
+  assert.ok(key, 'recorded under its own key for the card and condition');
+  assert.equal(bg.local.data[key].points.length, 1, 'the same price seen three times is one point');
+  assert.equal(bg.local.data[key].points[0].total, 10.81);
+  const mark = () => page.row('Lapras').querySelector('.item__ask-change');
+  assert.equal(page.row('Lapras').querySelector('.item__ask-icon'), null, 'unmoved so far, so nothing is shown');
+
+  // The cheapest listing drops, though nothing has sold.
+  world.prices[696683] = [8.51, 1.49];
+  assert.ok(await until(() => mark() && mark().classList.contains('item__ask-change--down')));
+  assert.equal(mark().textContent, '\u25BC \u22127.5%');
+  assert.equal(mark().getAttribute('title'), 'Previous Ask: $10.81');
+  assert.match(page.row('Lapras').querySelector('.item__ask').textContent, /^\u25BC \u22127\.5% Ask \$10\.00 \(\$8\.51 \+ \$1\.49 shipping\)$/);
+  assert.equal(page.row('Lapras').querySelector('.item__ask-icon').textContent, '\u25BC');
+  assert.equal(bg.local.data[key].points.length, 2);
+
+  // And it survives the dashboard being closed and opened again.
+  const again = await openDashboard(bg);
+  assert.ok(await until(() => again.row('Lapras').querySelector('.item__ask-change--down')));
+});
+
+test('a card saved on a day its featured listing was damaged is still priced, and judged against its target, in Near Mint', async () => {
+  const world = fakeWorld();
+  const damaged = { ...LAPRAS, priceAtSave: { ...LAPRAS.priceAtSave, condition: 'Damaged Holofoil' } };
+  const unknown = { ...MEOWTH, priceAtSave: null };
+  const lists = { version: 1, lists: [{ id: 'w', name: 'Watching', createdAt: '', updatedAt: '', items: [damaged, unknown] }] };
+  const bg = await startBackground(world, storageArea({ lists, settings: ON(5), targets: { [LAPRAS.key]: TARGET(11) } }));
+  await openDashboard(bg);
+  assert.ok(await until(() => targetOf(bg).met), 'the target was checked');
+  const terms = (id) => world.requests.filter((r) => r.url.includes(`/product/${id}/listings`)).map((r) => JSON.parse(r.body).filters.term);
+  for (const term of terms(696683)) assert.deepEqual([term.condition, term.printing], [['Near Mint'], ['Holofoil']]);
+  assert.ok(terms(696683).length >= 1);
+  // Nothing on record for the other, and nothing listed in Near Mint: it may be sealed, so that is looked at too.
+  assert.ok(await until(() => terms(714358).length >= 2));
+  assert.deepEqual(terms(714358).slice(0, 2).map((t) => t.condition), [['Near Mint'], ['Unopened']]);
+  assert.ok(Object.keys(bg.local.data).some((k) => k === 'ah:696683|near mint|holofoil'), 'and recorded as Near Mint');
+});
+
+test('Clear price cache leaves the Ask record alone; one nobody has looked at for months is dropped at start', async () => {
+  const old = Date.now() - 200 * 24 * 60 * 60 * 1000;
+  const local = preset({
+    'ah:1|near mint|holofoil': { points: [{ at: old, seen: old, total: 5 }] },
+    'ah:696683|near mint|holofoil': { points: [{ at: Date.now() - 1000, seen: Date.now() - 1000, total: 12 }] },
+  });
+  const bg = await startBackground(fakeWorld(), local);
+  assert.ok(await until(() => !('ah:1|near mint|holofoil' in local.data)), 'the stale one is gone');
+  const page = await openDashboard(bg);
+  assert.ok(await until(() => page.row('Lapras').querySelector('.item__ask-change--down')), 'the kept one is what today\'s Ask is set against');
+  page.document.getElementById('clearCache').click();
+  await settle(60);
+  assert.equal(local.data['ah:696683|near mint|holofoil'].points.length, 2);
 });
 
 

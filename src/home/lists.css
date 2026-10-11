@@ -4,6 +4,8 @@
 .list__header { align-items: baseline; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 12px; padding-bottom: 10px; }
 .list__name { font-size: 17px; margin: 0; }
 .list__count { color: var(--ink-soft); font-size: 13px; }
+.list__total { color: var(--ink-soft); font-size: 13px; font-variant-numeric: tabular-nums; }
+.list__total-figure { color: var(--ink); font-weight: 600; }
 .list__actions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .list__sort { align-items: center; display: inline-flex; gap: 6px; }
 .list__sort-select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 13px; padding: 2px 6px; }
@@ -99,3 +101,8 @@ button.trend__line[aria-expanded="true"] { background: var(--paper); box-shadow:
 .subscribe-notice__link { color: var(--accent); font-weight: 600; }
 .subscribe-notice__dismiss { font-size: 13px; padding: 3px 10px; }
 .item__ask-link { color: var(--accent); }
+
+/* ---- how the Ask has moved, drawn like a trend ----------------------------- */
+.item__ask-change { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.item__ask-change--up { color: var(--gain); }
+.item__ask-change--down { color: var(--loss); }

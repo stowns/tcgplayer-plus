@@ -182,6 +182,7 @@ test('a trend duration can be added and removed, but never the last one', () => 
   s = toggleTrendDuration(toggleTrendDuration(s, 14, false), 7, false);
   assert.deepEqual(s.trendDurations, [1]);
   assert.deepEqual(toggleTrendDuration(s, 1, false).trendDurations, [1], 'the last one stays');
-  assert.deepEqual(toggleTrendDuration(s, 30, true).trendDurations, [1], 'not a duration on offer');
+  assert.deepEqual(toggleTrendDuration(s, 60, true).trendDurations, [1], 'not a duration on offer');
+  assert.deepEqual(toggleTrendDuration(s, 30, true).trendDurations, [30, 1]);
   assert.deepEqual(toggleTrendDuration(s, 3, true).autoRefresh, s.autoRefresh, 'the rest is untouched');
 });

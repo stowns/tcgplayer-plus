@@ -3,7 +3,7 @@
  * messaging wired between them and TCGplayer's history feed stubbed by real
  * captured responses. The closest thing to loading the add-on.
  */
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
@@ -11,6 +11,10 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { PIKACHU_HISTORY, GENESECT_HISTORY } from './fixtures/tcgplayerHistory.js';
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+// Every window is closed after its test, so a lookup still under way does not outlive it.
+const opened = [];
+afterEach(() => { while (opened.length) opened.pop().close(); });
 
 const item = (productId, name) => ({
   key: `${productId}:english`, productId, language: 'English', name, setName: '', number: '',
@@ -47,9 +51,21 @@ function storageArea(initial = {}) {
   };
 }
 
+/** Ninety days in three-day steps, newest first: 12 for the newest thirty days, 10 before. */
+const QUARTER_FEED = {
+  result: [{
+    skuId: '9', condition: 'Near Mint', variant: 'Holofoil', language: 'English', totalQuantitySold: '100',
+    buckets: Array.from({ length: 30 }, (_, i) => ({
+      marketPrice: i < 10 ? '12' : '10', quantitySold: '6', transactionCount: '6', lowSalePrice: '9', highSalePrice: '13',
+      bucketStartDate: new Date(Date.UTC(2026, 8, 30) - i * 3 * 86400000).toISOString().slice(0, 10),
+    })),
+  }],
+};
+
 async function startBackground({ failFeeds = false, failFirst = 0, random = 0 } = {}) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
+  opened.push(window);
   const requested = [];
   const bus = messageBus();
   window.Math.random = () => random; // 0: retries wait no time at all
@@ -59,6 +75,7 @@ async function startBackground({ failFeeds = false, failFirst = 0, random = 0 } 
     requested.push(url);
     if (failFeeds || requested.length <= failFirst) return { ok: false, status: 503, json: async () => ({}) };
     const id = url.match(/history\/(\d+)\//)[1];
+    if (/range=quarter/.test(url)) return { ok: true, status: 200, json: async () => QUARTER_FEED };
     return { ok: true, status: 200, json: async () => FEEDS[id] };
   };
   const local = storageArea();
@@ -78,6 +95,7 @@ async function startListsPage(background, { settings, hash = '#lists' } = {}) {
     url: `moz-extension://test/home/home.html${hash}`, runScripts: 'outside-only', virtualConsole: new VirtualConsole(),
   });
   const { window } = dom;
+  opened.push(window);
   const observed = [];
   window.IntersectionObserver = class {
     constructor(cb) { this.cb = cb; }
@@ -114,7 +132,17 @@ async function startListsPage(background, { settings, hash = '#lists' } = {}) {
     document: window.document,
     local,
     observed,
-    reveal: async (index) => { instances[0].show(observed[index]); await settle(400); },
+    // The list's Asks are being looked up too (for its total), and requests are paced, so wait
+    // for this card's trend to arrive rather than for a fixed time.
+    reveal: async (index, { wait = true } = {}) => {
+      const row = observed[index];
+      instances[0].show(row);
+      if (!wait) { await settle(60); return; }
+      const start = Date.now();
+      const waiting = () => { const t = row.querySelector('.trend'); return !t || /trend--loading/.test(t.className); };
+      while (waiting() && Date.now() - start < 6000) await settle(25);
+      await settle(60);
+    },
   };
 }
 
@@ -199,6 +227,41 @@ test('the durations chosen in Settings each get a line, longest first, without a
   assert.equal(bg.requested.length, 1, 'every duration comes from the one history already fetched');
 });
 
+test('30 days is fetched from the 90-day history only when chosen, and only for cards on screen', async () => {
+  const bg = await startBackground();
+  const page = await startListsPage(bg);
+  await page.reveal(0);
+  const ranges = () => bg.requested.map((u) => u.split('range=')[1]);
+  assert.deepEqual(ranges(), ['month'], '7 days alone needs only the month');
+
+  await page.local.set({ settings: { trendDurations: [30, 7] } });
+  const trend = () => trendOf(page.document, 'Pikachu ex');
+  const start = Date.now();
+  while (!trend().querySelector('button.trend__line[data-days="30"]') && Date.now() - start < 4000) await settle(30);
+  assert.deepEqual(ranges(), ['month', 'quarter'], 'one more request, for the card already showing');
+  const line = trend().querySelector('.trend__line[data-days="30"]');
+  assert.equal(line.querySelector('.trend__summary').textContent, '▲ +20%');
+  assert.deepEqual([...trend().querySelectorAll('.trend__line')].map((l) => l.getAttribute('data-days')), ['30', '7']);
+
+  line.click();
+  await settle();
+  assert.match(trend().querySelector('svg.sparkline').getAttribute('aria-label'), /over the last 90 days.*Shaded: the last 30 days/);
+
+  // A card revealed afterwards asks for both at once.
+  await page.reveal(1);
+  const again = Date.now();
+  while (ranges().length < 4 && Date.now() - again < 6000) await settle(50);
+  assert.deepEqual(ranges(), ['month', 'quarter', 'month', 'quarter']);
+  assert.match(bg.requested[3], /history\/642621\//, 'for the second card');
+});
+
+test('the Settings tab offers 30 days and says what it costs', async () => {
+  const bg = await startBackground();
+  const page = await startListsPage(bg, { hash: '#settings' });
+  assert.deepEqual([...page.document.querySelectorAll('.settings-trends__choice')].map((l) => l.textContent.trim()), ['1 day', '3 days', '7 days', '14 days', '30 days']);
+  assert.match(page.document.querySelector('.settings-trends__note').textContent, /The 30-day trend needs a longer history, so it asks TCGplayer for one more thing per card\./);
+});
+
 test('a trend cached under the old rules is worked out again, with its durations', async () => {
   const bg = await startBackground();
   const key = 'tr:712953|english|near mint|holofoil';
@@ -207,6 +270,7 @@ test('a trend cached under the old rules is worked out again, with its durations
   assert.equal(bg.requested.length, 1, 'fetched, not served from the old entry');
   assert.equal(fresh.direction, 'down');
   assert.deepEqual(Object.keys(fresh.windows).map(Number), [1, 3, 7, 14]);
+  assert.equal(bg.requested[0].split('range=')[1], 'month', '30 days was not asked for, so neither was the longer history');
 });
 
 test('the Settings tab chooses the durations, and keeps at least one', async () => {
@@ -278,7 +342,7 @@ const waitFor = async (check, limit = 8000) => {
 test('while TCGplayer is not answering, the card says it is retrying, then shows the trend when it does', async () => {
   const bg = await startBackground({ failFirst: 1, random: 0.999 }); // the first retry waits about half a second
   const page = await startListsPage(bg);
-  await page.reveal(0);
+  await page.reveal(0, { wait: false }); // the retrying state is what is being looked for
   const row = () => [...page.document.querySelectorAll('.item')].find((r) => r.textContent.includes('Pikachu ex'));
 
   assert.ok(await waitFor(() => row().querySelector('.trend[data-retrying="1"]')), 'the card says it is retrying');

@@ -3,7 +3,7 @@
  * each list on its own.
  * TCGplayer's history feed is stubbed with real captured responses.
  */
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
@@ -12,6 +12,10 @@ import { PIKACHU_HISTORY, GENESECT_HISTORY } from './fixtures/tcgplayerHistory.j
 import { NO_LISTINGS } from './fixtures/tcgplayerListings.js';
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+// Every window is closed after its test, so a lookup still under way does not outlive it.
+const opened = [];
+afterEach(() => { while (opened.length) opened.pop().close(); });
 const until = async (check, limit = 8000) => {
   const start = Date.now();
   while (!check() && Date.now() - start < limit) await settle(25);
@@ -62,6 +66,7 @@ function storageArea(initial = {}) {
 async function startBackground() {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const { window } = dom;
+  opened.push(window);
   const requested = [];
   const asked = [];
   const bus = messageBus();
@@ -92,6 +97,7 @@ async function openLists(background, local = storageArea({ lists: freshLists() }
     url: 'http://localhost/home/home.html#lists', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole(),
   });
   const { window } = dom;
+  opened.push(window);
   window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
   if (brokenStorage) Object.defineProperty(window, 'localStorage', { get() { throw new Error('storage blocked'); } });
   else for (const [key, value] of Object.entries(remembered)) window.localStorage.setItem(key, value);
@@ -218,6 +224,7 @@ test('each item shows its Market (as saved) and then its Ask, price plus shippin
   await page.choose('Watching', 'ask');
   await idle(bg, page, 3, 'asked');
   const row = (name) => [...page.section('Watching').querySelectorAll('.item')].find((r) => r.textContent.includes(name));
+  // An Ask seen for the first time has not moved, so nothing is added to it.
   assert.equal(row('Pikachu ex').querySelector('.item__price').textContent,
     'Market $50.00 · Ask $72.50 ($70.00 + $2.50 shipping)');
   assert.equal(row('Genesect ex').querySelector('.item__price').textContent,
@@ -236,11 +243,15 @@ test('the sort is by the ask, not by the Market price saved with the card', asyn
   assert.deepEqual(page.names('Watching'), ['Genesect ex', 'Pikachu ex', 'Mystery Card'], 'cheapest first; nothing listed stays last');
 });
 
-test('a row shows its ask when it scrolls into view, without any sort being chosen', async () => {
+test('opening a list looks up the Ask of every card on it, for its total, without a scroll or a sort', async () => {
   const bg = await startBackground();
   const page = await openLists(bg);
-  assert.equal(bg.asked.length, 0, 'nothing is fetched for rows that have not been seen');
-  assert.match(page.section('Watching').querySelector('.item__ask').className, /item__ask--loading/);
+  assert.match(page.section('Watching').querySelector('.list__total').textContent, /^Total Ask /, 'there from the start, filling in as Asks arrive');
+  await idle(bg, page, 3, 'asked');
+  assert.equal(bg.asked.length, 3, 'the three cards of the list on show, and not the other list\'s');
+  // Pikachu $72.50 + Genesect $44.00; Mystery Card has nothing listed.
+  await until(() => /\$116\.50/.test(page.section('Watching').querySelector('.list__total').textContent));
+  assert.equal(page.section('Watching').querySelector('.list__total').textContent, 'Total Ask $116.50 (2 of 3 cards, 1 with no Ask)');
 });
 
 test('volatility sorts the choppiest first, and cards with no history stay last either way round', async () => {
@@ -293,7 +304,8 @@ test('changing a list\'s sort is a display choice: it does not count as editing 
 test('while prices load, the page says so', async () => {
   const bg = await startBackground();
   const page = await openLists(bg);
-  await page.choose('Watching', 'ask');
+  // Volatility needs the history of every card, which is not fetched until it is asked for.
+  await page.choose('Watching', 'volatility');
   assert.match(page.document.querySelector('#status').textContent, /Loading prices for 3 cards/);
   await until(() => !page.document.querySelector('#status').textContent);
 });

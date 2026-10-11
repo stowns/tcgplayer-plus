@@ -16,6 +16,7 @@ import { listSort } from './lists.js';
 import { isRetrying, retryText, retryTitle } from './retryState.js';
 import { describeTarget, DIRECTIONS } from './targets.js';
 import { SECRET_WORD_MAX, SECRET_WORD_RULE } from './settings.js';
+import { listTotal } from './listTotal.js';
 import { PAGE_SIZES, pageOf, parsePageSize, resolveSelection } from './listsPage.js';
 
 export function itemSubtitle(item) {
@@ -106,6 +107,8 @@ const daysLabel = (days) => `${days} day${days === 1 ? '' : 's'}`;
 /** What one duration's percent compares, for its tooltip. */
 function lineTooltip(trend, line) {
   const n = daysLabel(line.shownDays);
+  if (line.reason === 'pending') return `The last ${n} are compared with the ${n} before, from TCGplayer\u2019s 90-day history, which is being fetched.`;
+  if (line.reason === 'unavailable') return 'TCGplayer\u2019s 90-day price history could not be read just now.';
   if (line.reason !== 'ok') {
     const needs = Math.min(TREND.MIN_DAYS, line.shownDays);
     return `Too few sales to compare the last ${n} with the ${n} before. Each period needs at least `
@@ -138,7 +141,8 @@ function renderTrendLine(doc, trend, line, { expanded, onToggle, turn = '' }) {
   node.setAttribute('data-days', String(line.days));
   node.setAttribute('title', lineTooltip(trend, line));
   if (!known) {
-    node.append(el(doc, 'span', 'trend__label', `${daysLabel(line.shownDays)}: not enough sales`));
+    const why = { pending: 'checking\u2026', unavailable: 'unavailable' }[line.reason] || 'not enough sales';
+    node.append(el(doc, 'span', 'trend__label', `${daysLabel(line.shownDays)}: ${why}`));
     return node;
   }
   node.type = 'button';
@@ -190,13 +194,18 @@ export function renderTrend(doc, original, options = {}) {
     }
   }
   if (shown) {
-    // The thirty days of sales, with the two periods this line compares shaded.
-    const chart = renderSparkline(doc, trend.series, { width: 124, height: 36, endDate: trend.asOf, highlightDays: shown.shownDays });
+    // The sales the line was worked out from, with the two periods it compares shaded:
+    // the month, or the ninety days for the 30-day line.
+    const long = shown.shownDays === TREND.LONG_DURATION;
+    const span = long ? 90 : 30;
+    const chart = renderSparkline(doc, long ? trend.longSeries : trend.series, {
+      width: 124, height: 36, spanDays: span, endDate: long ? trend.longAsOf : trend.asOf, highlightDays: shown.shownDays,
+    });
     if (chart) {
       const frame = el(doc, 'div', `trend__chart trend__chart--${shown.direction}`);
-      const hidden = trend.outliersHidden > 0
+      const hidden = !long && trend.outliersHidden > 0
         ? ` ${trend.outliersHidden} outlier day${trend.outliersHidden === 1 ? '' : 's'} left out.` : '';
-      frame.setAttribute('title', `Sold price over the last 30 days. Shaded: the last ${daysLabel(shown.shownDays)} (darker) and the ${daysLabel(shown.shownDays)} before.${hidden}`);
+      frame.setAttribute('title', `Sold price over the last ${span} days. Shaded: the last ${daysLabel(shown.shownDays)} (darker) and the ${daysLabel(shown.shownDays)} before.${hidden}`);
       frame.append(chart);
       box.append(frame);
     }
@@ -271,6 +280,25 @@ export function askSummary(ask) {
   return `Ask ${formatMoney(total)} (${parts})`;
 }
 
+/**
+ * How the Ask stands against the different one recorded before it, drawn like a trend
+ * and placed in front of "Ask": "\u25BC \u22124.4%", in the colour of the move. Hovering
+ * it gives the previous Ask in dollars. Nothing while the Ask has not moved, or when no
+ * record came with it.
+ * @returns {HTMLElement|null}
+ */
+export function renderAskChange(doc, ask) {
+  const change = ask && ask.change;
+  if (!change || !['up', 'down'].includes(change.direction)) return null;
+  if (!Number.isFinite(change.pct) || !Number.isFinite(change.previous)) return null;
+  const { direction } = change;
+  const node = el(doc, 'span', `item__ask-change item__ask-change--${direction}`);
+  node.append(el(doc, 'span', 'item__ask-icon', ARROWS[direction]), ` ${formatChange(change.pct)}`);
+  node.setAttribute('title', `Previous Ask: ${formatMoney(change.previous)}`);
+  node.setAttribute('aria-label', `Ask ${direction} ${formatChange(change.pct).replace(/^[+\u2212]/, '')} from ${formatMoney(change.previous)}`);
+  return node;
+}
+
 export function renderAsk(doc, ask) {
   const retrying = isRetrying(ask);
   const node = el(doc, 'span', `item__ask item__ask--${!ask || retrying ? 'loading' : landedNow(ask) === null ? 'unknown' : 'ok'}`, askSummary(ask));
@@ -281,6 +309,8 @@ export function renderAsk(doc, ask) {
   if (ask && landedNow(ask) !== null) {
     node.setAttribute('title', `The cheapest live listing in the same condition and printing, with its shipping`
       + `${ask.seller ? `, from ${ask.seller}` : ''}. This is what it costs to buy, unlike TCGplayer\u2019s Market Price.`);
+    const change = renderAskChange(doc, ask);
+    if (change) node.prepend(change, ' ');
     // The product page opens on a featured seller, so the listing itself is linked.
     if (isListingUrl(ask.url)) {
       const link = el(doc, 'a', 'item__ask-link', 'view listing');
@@ -574,12 +604,46 @@ function renderSortControl(doc, list, sort, handlers) {
   return wrap;
 }
 
+/**
+ * "Total Ask $123.45": what buying every card on the list would cost today, each at
+ * its own cheapest listing with shipping. Says how many cards it covers while some
+ * are still being looked up or have nothing listed. Null for an empty list.
+ * @param {Record<string, object>|undefined} asks what has been looked up; no total is shown without it
+ */
+export function renderListTotal(doc, list, asks) {
+  if (!asks || !list.items.length) return null;
+  const sum = listTotal(list.items, asks);
+  const node = el(doc, 'span', 'list__total');
+  node.setAttribute('data-list', list.id);
+  const figure = sum.priced ? formatMoney(sum.total) : sum.pending ? 'checking\u2026' : 'none listed';
+  node.append('Total Ask ', el(doc, 'strong', 'list__total-figure', figure));
+  const notes = [];
+  if (sum.priced && sum.priced < sum.items) notes.push(`${sum.priced} of ${sum.items} cards`);
+  if (sum.priced && sum.pending) notes.push(`checking ${sum.pending}\u2026`);
+  if (sum.priced && sum.missing) notes.push(`${sum.missing} with no Ask`);
+  if (notes.length) node.append(' ', el(doc, 'span', 'list__total-note', `(${notes.join(', ')})`));
+  node.setAttribute('title', 'What buying every card on this list would cost today: the cheapest live listing of each, with its shipping. '
+    + 'Bought together, TCGplayer may combine shipping, so a real cart can come to less.');
+  return node;
+}
+
+/** Redraw a list's total in place, as its Asks arrive. */
+export function updateListTotal(container, list, asks) {
+  const old = [...container.querySelectorAll('.list__total')].find((node) => node.getAttribute('data-list') === list.id);
+  const fresh = renderListTotal(container.ownerDocument, list, asks);
+  if (!old || !fresh) return false;
+  old.replaceWith(fresh);
+  return true;
+}
+
 function renderList(doc, list, handlers, trends, asks, view = {}) {
   const section = el(doc, 'section', 'list');
 
   const header = el(doc, 'header', 'list__header');
   header.append(el(doc, 'h2', 'list__name', list.name));
   header.append(el(doc, 'span', 'list__count', `${list.items.length} item${list.items.length === 1 ? '' : 's'}`));
+  const total = renderListTotal(doc, list, asks);
+  if (total) header.append(total);
 
   const actions = el(doc, 'div', 'list__actions');
   const sort = listSort(list);

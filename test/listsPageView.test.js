@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderLists, exportJson, itemSubtitle, priceSummary, askSummary, renderAsk, updateAsk } from '../src/lib/listsPageView.js';
+import { renderLists, exportJson, itemSubtitle, priceSummary, askSummary, renderAsk, updateAsk, renderAskChange, renderListTotal, updateListTotal } from '../src/lib/listsPageView.js';
 import { emptyState, createList, addItem, setListSort } from '../src/lib/lists.js';
 import { computeTrend, normalizeBuckets } from '../src/lib/priceTrend.js';
 import { PIKACHU_HISTORY } from './fixtures/tcgplayerHistory.js';
@@ -499,9 +499,9 @@ test('a card held in two lists updates in both', () => {
   assert.equal(container.querySelectorAll('.item__ask--ok').length, 2);
 });
 
-test('a different condition of the same card has its own ask', () => {
+test('a card saved on a day its featured listing was not Near Mint shares the Near Mint ask', () => {
   const lp = { ...ITEM, priceAtSave: { ...ITEM.priceAtSave, condition: 'Lightly Played Holofoil' } };
-  assert.notEqual(askKey(ITEM), askKey(lp));
+  assert.equal(askKey(ITEM), askKey(lp));
 });
 
 // ---- choosing a list and paging through it -----------------------------------
@@ -1016,4 +1016,159 @@ test('updateTrend and the list pass the durations and the open chart through, by
   assert.deepEqual([...cell().querySelectorAll('.trend__line')].map((l) => l.getAttribute('data-days')), ['1']);
   assert.equal(cell().querySelector('svg'), null);
   assert.doesNotThrow(() => trendOptionsFor(key).onToggle(7), 'no handler is fine');
+});
+
+// ---- thirty days: a second history, so it can be waiting, missing, or drawn over ninety days ----
+
+const LONG_SERIES = Array.from({ length: 30 }, (_, i) => ({ date: new Date(Date.UTC(2026, 8, 30) - (29 - i) * 3 * 86400000).toISOString().slice(0, 10), price: 60 + i }));
+const WITH_LONG = {
+  ...REAL,
+  windows: { ...REAL.windows, 30: { windowDays: 30, direction: 'up', pct: 0.12, recent: { median: 84, days: 10, sales: 300 }, prior: { median: 75, days: 10, sales: 280 }, reason: 'ok' } },
+  longSeries: LONG_SERIES, longAsOf: '2026-09-30',
+};
+
+test('the 30-day line says it is being checked until its longer history arrives', () => {
+  const box = renderTrend(doc(), REAL, { durations: [30, 7], expanded: 30 });
+  const line = box.querySelector('.trend__line[data-days="30"]');
+  assert.equal(line.tagName, 'DIV');
+  assert.equal(line.textContent, '30 days: checking\u2026');
+  assert.match(line.getAttribute('title'), /90-day history, which is being fetched/);
+  assert.equal(box.querySelector('svg'), null);
+  assert.equal(box.querySelector('.trend__line[data-days="7"]').tagName, 'BUTTON', 'the rest is already there');
+
+  const failed = { ...REAL, windows: { ...REAL.windows, 30: { windowDays: 30, direction: 'unknown', pct: null, reason: 'unavailable' } } };
+  const gone = renderTrend(doc(), failed, { durations: [30] }).querySelector('.trend__line');
+  assert.equal(gone.textContent, '30 days: unavailable');
+  assert.match(gone.getAttribute('title'), /90-day price history could not be read/);
+});
+
+test('the 30-day line opens a 90-day chart with its two thirty-day periods shaded', () => {
+  const box = renderTrend(doc(), WITH_LONG, { durations: [30, 7], expanded: 30 });
+  const line = box.querySelector('.trend__line[data-days="30"]');
+  assert.equal(line.querySelector('.trend__summary').textContent, '\u25B2 +12%');
+  assert.equal(line.querySelector('.trend__label').textContent, '30 days');
+  const chart = box.querySelector('.trend__chart--up svg.sparkline');
+  assert.match(chart.getAttribute('aria-label'), /^Sold price over the last 90 days, from \$60\.00 to \$89\.00\. Shaded: the last 30 days, and the 30 before$/);
+  assert.match(box.querySelector('.trend__chart').getAttribute('title'), /^Sold price over the last 90 days\. Shaded: the last 30 days \(darker\) and the 30 days before\.$/);
+  const [prior, recent] = [...chart.querySelectorAll('.sparkline__band')].map((b) => Number(b.getAttribute('width')));
+  // Each is a third of the ninety days across.
+  assert.ok(Math.abs(prior - 118 / 89 * 30) < 1 && Math.abs(recent - prior) < 1, `${prior} ${recent}`);
+
+  // The 7-day line of the same card still opens the month.
+  const month = renderTrend(doc(), WITH_LONG, { durations: [30, 7], expanded: 7 });
+  assert.match(month.querySelector('svg.sparkline').getAttribute('aria-label'), /over the last 30 days/);
+});
+
+// ---- how the Ask has moved, drawn like a trend ---------------------------------------------
+
+test('an Ask that fell or rose leads with its arrow and percent, in the move\'s colour, before the word Ask', () => {
+  const down = renderAsk(doc(), { ...okAsk(85.99, 0), change: { direction: 'down', pct: -0.0444, diff: -4, previous: 89.99 } });
+  assert.equal(down.textContent, '\u25BC \u22124.4% Ask $85.99 ($85.99, free shipping)');
+  const mark = down.firstElementChild;
+  assert.ok(mark.classList.contains('item__ask-change') && mark.classList.contains('item__ask-change--down'));
+  assert.equal(mark.textContent, '\u25BC \u22124.4%');
+  assert.equal(mark.querySelector('.item__ask-icon').textContent, '\u25BC');
+  assert.equal(mark.getAttribute('aria-label'), 'Ask down 4.4% from $89.99');
+  assert.doesNotMatch(down.textContent, /since/);
+
+  const up = renderAskChange(doc(), { ...okAsk(9.5, 0.99), change: { direction: 'up', pct: 0.2, diff: 1.75, previous: 8.74 } });
+  assert.ok(up.classList.contains('item__ask-change--up'));
+  assert.equal(up.textContent, '\u25B2 +20%');
+});
+
+test('hovering the arrow gives the previous Ask in dollars', () => {
+  const mark = renderAskChange(doc(), { ...okAsk(85.99, 0), change: { direction: 'down', pct: -0.0444, previous: 89.99 } });
+  assert.equal(mark.getAttribute('title'), 'Previous Ask: $89.99');
+  assert.equal(mark.querySelector('.item__ask-icon').closest('[title]'), mark, 'the arrow sits inside what carries the tooltip');
+});
+
+test('an Ask that has not moved shows nothing: no icon, no percent', () => {
+  const ask = { ...okAsk(10, 0), change: { direction: 'flat' } };
+  assert.equal(renderAskChange(doc(), ask), null);
+  const node = renderAsk(doc(), ask);
+  assert.equal(node.textContent, 'Ask $10.00 ($10.00, free shipping)');
+  assert.equal(node.querySelector('.item__ask-icon, .item__ask-change'), null);
+});
+
+test('no record, or one that makes no sense, shows nothing beside the Ask', () => {
+  for (const change of [undefined, null, {}, { direction: 'sideways' }, { direction: 'down' }, { direction: 'down', pct: -0.1 }, { direction: 'up', previous: 5 }]) {
+    assert.equal(renderAskChange(doc(), { ...okAsk(10, 0), change }), null, JSON.stringify(change));
+  }
+  assert.equal(renderAsk(doc(), { status: 'none', change: { direction: 'down', pct: -0.1, previous: 5 } }).querySelector('.item__ask-change'), null, 'nothing listed, nothing to mark');
+});
+
+test('the arrow and percent lead, then the Ask, then the listing link', () => {
+  const node = renderAsk(doc(), {
+    ...okAsk(10, 1.49), url: 'https://www.tcgplayer.com/product/535952?seller=d8035033&page=1',
+    change: { direction: 'up', pct: 0.05, previous: 10.94 },
+  });
+  assert.deepEqual([...node.children].map((n) => n.className), ['item__ask-change item__ask-change--up', 'item__ask-link']);
+  assert.equal(node.textContent, '\u25B2 +5.0% Ask $11.49 ($10.00 + $1.49 shipping) \u00B7 view listing');
+});
+
+test('rising Asks are green and falling ones red, like trends', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile('src/home/lists.css', 'utf8');
+  assert.match(css, /\.item__ask-change--up \{ color: var\(--gain\); \}/);
+  assert.match(css, /\.item__ask-change--down \{ color: var\(--loss\); \}/);
+  assert.doesNotMatch(css, /item__ask-change--flat/, 'unmoved keeps the grey of the line');
+});
+
+// ---- what buying the whole list would cost -------------------------------------------------
+
+const totalOf = (asks) => {
+  const d = doc();
+  const { state } = populated();
+  const [list] = state.lists;
+  return { d, list, state, node: renderListTotal(d, list, typeof asks === 'function' ? asks(list) : asks) };
+};
+
+test('a list shows the total of its cards\' Asks beside its count', () => {
+  const d = doc();
+  const { state } = populated();
+  const [list] = state.lists;
+  const asks = Object.fromEntries(list.items.map((item, i) => [askKey(item), okAsk(10 + i, 0.99)]));
+  renderLists(d, d.getElementById('lists'), state, {}, {}, asks);
+  const header = d.querySelector('.list__header');
+  const total = header.querySelector('.list__total');
+  const expected = list.items.reduce((sum, _, i) => sum + 10 + i + 0.99, 0);
+  assert.equal(total.textContent, `Total Ask $${expected.toFixed(2)}`);
+  assert.equal(total.querySelector('.list__total-figure').tagName, 'STRONG');
+  assert.equal(header.querySelector('.list__count').nextElementSibling, total, 'straight after the count');
+  assert.match(total.getAttribute('title'), /cheapest live listing of each, with its shipping.*a real cart can come to less/);
+});
+
+test('while some Asks are missing the total says how much of the list it covers', () => {
+  const { list, node } = totalOf((l) => ({ [askKey(l.items[0])]: okAsk(10, 0) }));
+  if (list.items.length > 1) {
+    assert.equal(node.textContent, `Total Ask $10.00 (1 of ${list.items.length} cards, checking ${list.items.length - 1}\u2026)`);
+  } else {
+    assert.equal(node.textContent, 'Total Ask $10.00');
+  }
+  assert.equal(totalOf({}).node.textContent, 'Total Ask checking\u2026', 'nothing back yet');
+  const none = totalOf((l) => Object.fromEntries(l.items.map((item) => [askKey(item), { status: 'none' }])));
+  assert.equal(none.node.textContent, 'Total Ask none listed');
+});
+
+test('no total without Asks to add up, or for an empty list', () => {
+  const { d, list } = totalOf({});
+  assert.equal(renderListTotal(d, list, undefined), null);
+  assert.equal(renderListTotal(d, { ...list, items: [] }, {}), null);
+  const { state } = populated();
+  renderLists(d, d.getElementById('lists'), state, {});
+  assert.equal(d.querySelector('.list__total'), null, 'as before when the caller tracks no Asks');
+});
+
+test('updateListTotal redraws the total in place as Asks arrive', () => {
+  const d = doc();
+  const { state } = populated();
+  const [list] = state.lists;
+  const container = d.getElementById('lists');
+  renderLists(d, container, state, {}, {}, {});
+  assert.equal(container.querySelector('.list__total').textContent, 'Total Ask checking\u2026');
+  const asks = Object.fromEntries(list.items.map((item) => [askKey(item), okAsk(5, 0)]));
+  assert.equal(updateListTotal(container, list, asks), true);
+  assert.equal(container.querySelector('.list__total-figure').textContent, `$${(5 * list.items.length).toFixed(2)}`);
+  assert.equal(container.querySelectorAll('.list__total').length, 1, 'replaced, not added');
+  assert.equal(updateListTotal(container, { ...list, id: 'not-shown' }, asks), false);
 });

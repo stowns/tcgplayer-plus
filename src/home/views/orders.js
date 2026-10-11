@@ -16,6 +16,7 @@ import { api } from '../../lib/runtime.js';
 import { readOrders } from '../../lib/orderReader.js';
 import { retryingState, isSettled } from '../../lib/retryState.js';
 import { loadSettings, SETTINGS_KEY } from '../../lib/settings.js';
+import { TREND, hasLongTrend } from '../../lib/priceTrend.js';
 
 const storage = api.storage.local;
 
@@ -82,6 +83,7 @@ export function mount(root) {
       updateOrderTrend(container, key, trends[key] || null, trendView);
     },
   };
+  const wantsLong = () => (trendView.durations || []).includes(TREND.LONG_DURATION);
   const trends = {};            // trend key -> trend, kept so a redraw never flashes back to "checking"
   const trendRequested = new Set();
   let itemsByTrendKey = new Map();
@@ -150,7 +152,8 @@ export function mount(root) {
     trendRequested.add(key);
     let result;
     try {
-      result = await api.runtime.sendMessage({ type: 'price-trend', ref: key, item: { productId: item.productId, condition: item.condition } });
+      // The 30-day trend needs a second, longer history; only asked for when it is shown.
+      result = await api.runtime.sendMessage({ type: 'price-trend', ref: key, item: { productId: item.productId, condition: item.condition, long: wantsLong() } });
     } catch {
       result = null;
     }
@@ -279,7 +282,14 @@ export function mount(root) {
       loadSettings(storage).then((settings) => {
         if (!mounted || String(settings.trendDurations) === String(trendView.durations)) return;
         trendView.durations = settings.trendDurations;
-        for (const key of Object.keys(trends)) updateOrderTrend(container, key, trends[key], trendView);
+        for (const key of Object.keys(trends)) {
+          updateOrderTrend(container, key, trends[key], trendView);
+          // 30 days was just chosen: the trends already here were fetched without it.
+          if (wantsLong() && isSettled(trends[key]) && trends[key].windows && !hasLongTrend(trends[key])) {
+            trendRequested.delete(key);
+            requestTrend(key);
+          }
+        }
       });
     }
   };

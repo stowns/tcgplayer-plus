@@ -25,7 +25,7 @@ export const TREND = {
    * the version they were worked out under, and an older one is recomputed
    * instead of being shown with the old rules.
    */
-  VERSION: 3,
+  VERSION: 4,
   /** Within this fraction either way, the price is called flat. */
   FLAT_BAND: 0.01,
   /** Each window needs at least this many days with sales... */
@@ -67,7 +67,7 @@ const dayNumber = (day) => Math.floor(Date.parse(`${day}T00:00:00Z`) / DAY_MS);
 
 /**
  * Turn raw API buckets (strings, newest first) into numbers, oldest first.
- * @returns {{date: string, price: number, quantity: number, transactions: number}[]}
+ * @returns {{date: string, price: number, quantity: number, transactions: number, low: number}[]}
  */
 export function normalizeBuckets(buckets) {
   if (!Array.isArray(buckets)) return [];
@@ -80,6 +80,8 @@ export function normalizeBuckets(buckets) {
       price: Number(b.marketPrice) || 0,
       quantity: Number(b.quantitySold) || 0,
       transactions: Number(b.transactionCount) || 0,
+      // The cheapest sale of the day with its shipping, which is how an Ask is counted too.
+      low: Number(b.lowSalePriceWithShipping) || Number(b.lowSalePrice) || 0,
     });
   }
   return days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -157,7 +159,7 @@ function withoutOutliers(sold) {
  *   latest: object|null, turning: 'up'|'down'|null,
  *   series: {date: string, price: number}[], outliersHidden: number,
  *   reason: 'ok'|'no-data'|'not-enough-sales',
- *   windows?: Record<number, object>, asOf?: string}}  `windows` holds every duration in TREND.DURATIONS;
+ *   windows?: Record<number, object>, asOf?: string, lowestSale?: number|null}}  `windows` holds every duration in TREND.DAILY_DURATIONS;
  *   `asOf` is the newest day in the data, which the windows are measured back from
  */
 export function computeTrend(days) {
@@ -184,7 +186,12 @@ export function computeTrend(days) {
   // Every duration the month can give, so choosing among them never needs the history again.
   const windows = {};
   for (const length of TREND.DAILY_DURATIONS) windows[length] = windowTrend(between, length);
-  const shared = { ...base, windows, asOf: all[all.length - 1].date };
+  const lows = sold.map((d) => d.low).filter((low) => Number.isFinite(low) && low > 0);
+  const shared = {
+    ...base, windows, asOf: all[all.length - 1].date,
+    // The least anything sold for in the data, with shipping; null when the feed gives no lows.
+    lowestSale: lows.length ? Math.min(...lows) : null,
+  };
 
   let lastTried = null;
   for (const length of TREND.WINDOWS) {

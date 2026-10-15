@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lookupListing, listingCacheKey } from '../src/lib/listingLookup.js';
+import { lookupListing, lookupPrintings, listingCacheKey } from '../src/lib/listingLookup.js';
 import { LAPRAS_LISTINGS, NO_LISTINGS } from './fixtures/tcgplayerListings.js';
 
 const ITEM = { productId: '696683', condition: 'Near Mint Holofoil' };
@@ -112,4 +112,18 @@ test('nothing listed either way is "none", and a failure on the second look is u
   let calls = 0;
   const failing = async () => { calls += 1; if (calls === 2) throw new Error('503'); return NO_LISTINGS; };
   assert.deepEqual(await lookupListing(item, { postJson: failing }), { status: 'unavailable' });
+});
+
+test('lookupPrintings asks the listings search for the product\'s tally by printing', async () => {
+  const calls = [];
+  const postJson = async (url, body) => { calls.push({ url, body }); return { results: [{ aggregations: { printing: [{ value: 'Holofoil', count: 9 }] } }] }; };
+  assert.deepEqual(await lookupPrintings({ productId: '517016' }, { postJson }), { status: 'ok', printings: [{ name: 'Holofoil', listings: 9 }] });
+  assert.equal(calls[0].url, 'https://mp-search-api.tcgplayer.com/v1/product/517016/listings');
+  assert.deepEqual(calls[0].body.aggregations, ['printing']);
+});
+
+test('lookupPrintings fails soft', async () => {
+  assert.deepEqual(await lookupPrintings({ productId: 'x' }, { postJson: async () => ({}) }), { status: 'unavailable' });
+  assert.deepEqual(await lookupPrintings({ productId: '1' }, { postJson: async () => { throw new Error('503'); } }), { status: 'unavailable' });
+  assert.deepEqual(await lookupPrintings({ productId: '1' }, { postJson: async () => ({ nonsense: true }) }), { status: 'unavailable' });
 });

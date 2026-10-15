@@ -46,7 +46,10 @@ const FEEDS = { 712953: PIKACHU_HISTORY, 642621: GENESECT_HISTORY };
 // The cheapest live listing for each card: what it costs to buy, price + shipping.
 //   Pikachu $70.00 + $2.50 = $72.50    Genesect $44.00 + $0 = $44.00    Mystery: nothing listed
 const listing = (price, shippingPrice) => ({
-  errors: [], results: [{ totalResults: 12, results: [{ price, shippingPrice, listingType: 'standard', sellerName: 'EmeraldElsya' }] }],
+  errors: [], results: [{
+    totalResults: 12, results: [{ price, shippingPrice, listingType: 'standard', sellerName: 'EmeraldElsya' }],
+    aggregations: { printing: [{ value: 'Reverse Holofoil', count: 4 }, { value: 'Holofoil', count: 8 }] },
+  }],
 });
 const LISTINGS = { 712953: listing(70, 2.5), 642621: listing(44, 0) };
 
@@ -241,6 +244,17 @@ test('the sort is by the ask, not by the Market price saved with the card', asyn
   assert.deepEqual(page.names('Watching').slice(0, 2), ['Pikachu ex', 'Genesect ex']);
   await page.reverse('Watching');
   assert.deepEqual(page.names('Watching'), ['Genesect ex', 'Pikachu ex', 'Mystery Card'], 'cheapest first; nothing listed stays last');
+});
+
+test('the background answers which printings a product is listed in, most-listed first', async () => {
+  const bg = await startBackground();
+  // Compared as text: the answers were made in the background's own JavaScript realm.
+  const text = async (message) => JSON.stringify(await bg.send(message));
+  assert.equal(await text({ type: 'product-printings', item: { productId: '712953' } }),
+    JSON.stringify({ status: 'ok', printings: [{ name: 'Holofoil', listings: 8 }, { name: 'Reverse Holofoil', listings: 4 }] }));
+  assert.equal(JSON.stringify(bg.asked), JSON.stringify(['712953']), 'one request to the listings search');
+  assert.equal(await text({ type: 'product-printings', item: { productId: 'nope' } }), JSON.stringify({ status: 'unavailable' }));
+  assert.equal(await text({ type: 'product-printings', item: { productId: '999001' } }), JSON.stringify({ status: 'ok', printings: [] }), 'nothing listed');
 });
 
 test('opening a list looks up the Ask of every card on it, for its total, without a scroll or a sort', async () => {

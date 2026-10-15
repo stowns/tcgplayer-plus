@@ -13,6 +13,7 @@
  */
 
 import { parseSort } from './listsSort.js';
+import { splitConditionVariant } from './tcgplayerHistory.js';
 
 export const LISTS_VERSION = 1;
 
@@ -27,15 +28,49 @@ export function emptyState() {
   return { version: LISTS_VERSION, lists: [] };
 }
 
+/** A printing as it is kept: "Reverse Holofoil", tidied; empty when there is none. */
+export const cleanPrinting = (printing) => (typeof printing === 'string' ? printing.replace(/\s+/g, ' ').trim().slice(0, 60) : '');
+
 /**
  * What makes two saved products the same. The product id alone is not enough:
  * one page serves several language printings, which are priced separately and
- * are genuinely different things to want.
+ * are genuinely different things to want. A chosen printing (Holofoil, Reverse
+ * Holofoil) is part of it too; an entry saved without one keeps the key it has
+ * always had.
  */
-export function itemKey({ productId, language } = {}) {
+export function itemKey({ productId, language, printing } = {}) {
   if (!productId) throw new Error('An item needs a productId');
-  return `${String(productId).trim()}:${String(language || 'english').trim().toLowerCase()}`;
+  const base = `${String(productId).trim()}:${String(language || 'english').trim().toLowerCase()}`;
+  const chosen = cleanPrinting(printing).toLowerCase();
+  return chosen ? `${base}:${chosen}` : base;
 }
+
+/**
+ * The printing an entry follows: the one chosen for it, or else the one in the
+ * condition recorded from its product page ("Near Mint Holofoil").
+ */
+export function effectivePrinting(item) {
+  if (!item) return '';
+  const chosen = cleanPrinting(item.printing);
+  if (chosen) return chosen;
+  return splitConditionVariant(item.priceAtSave ? item.priceAtSave.condition : '').variant;
+}
+
+/**
+ * Are these the same thing to watch: one product, language and printing? Whichever way
+ * each was saved, with a printing chosen or read from its product page. An entry whose
+ * printing was never known stands for the product in any printing, so it matches them all.
+ */
+export function sameEntry(a, b) {
+  if (!a || !b || String(a.productId) !== String(b.productId)) return false;
+  const lang = (item) => String(item.language || 'english').trim().toLowerCase();
+  if (lang(a) !== lang(b)) return false;
+  const [pa, pb] = [effectivePrinting(a).toLowerCase(), effectivePrinting(b).toLowerCase()];
+  return !pa || !pb || pa === pb;
+}
+
+/** The entry in a list that is this product, language and printing, if there is one. */
+export const findEntry = (list, item) => (list ? list.items.find((i) => sameEntry(i, item)) : undefined);
 
 function cleanName(name) {
   const text = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim() : '';
@@ -104,7 +139,7 @@ export function deleteList(state, listId) {
 export function addItem(state, listId, item, { now = new Date().toISOString() } = {}) {
   const list = requireList(state, listId);
   const key = itemKey(item);
-  if (list.items.some((i) => i.key === key)) return { state, added: false };
+  if (list.items.some((i) => i.key === key || sameEntry(i, item))) return { state, added: false };
   if (list.items.length >= LIST_LIMITS.maxItemsPerList) {
     throw new Error(`"${list.name}" is full (${LIST_LIMITS.maxItemsPerList} items)`);
   }
@@ -121,6 +156,7 @@ export function addItem(state, listId, item, { now = new Date().toISOString() } 
     imageUrl: item.imageUrl || '',
     url: item.url || '',
     priceAtSave: item.priceAtSave || null,
+    ...(cleanPrinting(item.printing) ? { printing: cleanPrinting(item.printing) } : {}),
     note: typeof item.note === 'string' ? item.note.slice(0, LIST_LIMITS.maxNoteLength) : '',
     savedAt: now,
   };
@@ -161,9 +197,28 @@ export function removeItem(state, listId, key, { now = new Date().toISOString() 
   };
 }
 
-/** Which lists a product is already saved in. */
-export function listsContaining(state, key) {
-  return state.lists.filter((l) => l.items.some((i) => i.key === key)).map((l) => l.id);
+/**
+ * Which lists a product is already saved in.
+ * @param {string|object} keyOrItem a stored key, or an item (matched by `sameEntry`)
+ */
+export function listsContaining(state, keyOrItem) {
+  const matches = typeof keyOrItem === 'string'
+    ? (i) => i.key === keyOrItem
+    : (i) => sameEntry(i, keyOrItem);
+  return state.lists.filter((l) => l.items.some(matches)).map((l) => l.id);
+}
+
+/** Which lists hold this product in any printing (for a button that stands for the product). */
+export function listsHoldingProduct(state, { productId, language } = {}) {
+  const lang = String(language || 'english').trim().toLowerCase();
+  return state.lists.filter((l) => l.items.some((i) => String(i.productId) === String(productId)
+    && String(i.language || 'english').trim().toLowerCase() === lang)).map((l) => l.id);
+}
+
+/** Take this product, language and printing off a list, however it was saved there. */
+export function removeEntry(state, listId, item, options) {
+  const entry = findEntry(state.lists.find((l) => l.id === listId), item);
+  return entry ? removeItem(state, listId, entry.key, options) : state;
 }
 
 export function countItems(state) {

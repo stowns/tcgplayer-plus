@@ -1,16 +1,19 @@
 /*
- * TCGPlayer+ — "Add to watch list" on TCGplayer product pages.
- * TCGplayer has no way to keep a product for later; this adds one that is kept
- * separate from browser bookmarks.
+ * TCGPlayer+ — "Add to watch list" on TCGplayer product pages, and on each product
+ * card of its search pages. TCGplayer has no way to keep a product for later; this
+ * adds one that is kept separate from browser bookmarks.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { parseProductPage, productIdFromUrl } from '../lib/tcgplayerDom.js';
+import {
+  parseProductPage, productIdFromUrl, parseSearchCard, SEARCH_CARD_SELECTOR,
+} from '../lib/tcgplayerDom.js';
+import { splitConditionVariant } from '../lib/tcgplayerHistory.js';
 import { renderSaveControl, CONTROL_CLASS } from '../lib/listPanelView.js';
 import { loadLists, saveLists, LISTS_KEY } from '../lib/listsStorage.js';
 import {
-  createList, addItem, removeItem, listsContaining, itemKey,
+  createList, addItem, removeEntry, listsContaining, listsHoldingProduct, effectivePrinting,
 } from '../lib/lists.js';
 import { api } from '../lib/runtime.js';
 
@@ -22,9 +25,14 @@ let product = null;
 let currentUrl = location.href;
 
 async function refresh() {
-  if (!control || !product) return;
   const state = await loadLists(storage);
-  control.update({ lists: state.lists, savedIn: listsContaining(state, itemKey(product)) });
+  // Matched by product, language and printing, so cards saved before printings were kept still
+  // count. Until the page has shown which printing it is, any printing of the product counts.
+  if (control && product) {
+    const savedIn = effectivePrinting(product) ? listsContaining(state, product) : listsHoldingProduct(state, product);
+    control.update({ lists: state.lists, savedIn });
+  }
+  refreshCards(state);
 }
 
 /** Read, change, write. Errors are shown in the panel, never swallowed. */
@@ -48,6 +56,9 @@ async function mutate(change) {
 function currentProduct() {
   const fresh = parseProductPage(document, location.href);
   if (!fresh || !fresh.name) throw new Error('This page has not finished loading the card\u2019s name yet. Try again in a moment.');
+  // The printing the page is showing (its listing's "Near Mint Holofoil"), kept with the entry.
+  const { variant } = splitConditionVariant(fresh.priceAtSave ? fresh.priceAtSave.condition : '');
+  if (variant) fresh.printing = variant;
   product = fresh;
   return fresh;
 }
@@ -55,7 +66,7 @@ function currentProduct() {
 const handlers = {
   onToggle: (listId, checked) => mutate((state) => (checked
     ? addItem(state, listId, currentProduct()).state
-    : removeItem(state, listId, itemKey(product)))),
+    : removeEntry(state, listId, product))),
 
   onCreate: (name) => mutate((state) => {
     const { state: withList, list } = createList(state, name);
@@ -65,6 +76,78 @@ const handlers = {
 
   onManage: () => api.runtime.sendMessage({ type: 'open-lists' }),
 };
+
+// ---- the cards of a search page ----------------------------------------------------------
+
+/** Each search card's control, with what it saves: the card's product, and the printing chosen. */
+const cards = new Map(); // card element -> { control, item, printing: string|null }
+
+const entryOf = (card) => ({ ...card.item, ...(card.printing ? { printing: card.printing } : {}) });
+
+function refreshCards(state) {
+  for (const [element, card] of cards) {
+    // A card drawn over by a new page of results: its panel goes with it.
+    if (!element.isConnected) { card.control.close(); cards.delete(element); continue; }
+    card.control.update({
+      lists: state.lists,
+      savedIn: card.printing === null ? [] : listsContaining(state, entryOf(card)),
+      // The button stands for the product, so it counts every printing of it.
+      buttonCount: listsHoldingProduct(state, card.item).length,
+    });
+  }
+}
+
+async function mutateCard(card, change) {
+  try {
+    const state = await loadLists(storage);
+    const next = change(state);
+    if (next) await saveLists(storage, next);
+    card.control.showError('');
+  } catch (err) {
+    card.control.showError(err && err.message ? err.message : String(err));
+  }
+  await refresh();
+}
+
+function decorate(element) {
+  const item = parseSearchCard(element, location.href);
+  if (!item) return;
+  const card = { item, printing: null, control: null };
+  card.control = renderSaveControl(document, {
+    lists: [],
+    savedIn: [],
+    choosePrinting: true,
+    // The result cards cut off whatever overflows them, so the panel opens on the page itself.
+    floating: true,
+    handlers: {
+      onLoadPrintings: () => api.runtime.sendMessage({ type: 'product-printings', item: { productId: item.productId } }),
+      onChoosePrinting: (name) => { card.printing = name; refresh(); },
+      onToggle: (listId, checked) => mutateCard(card, (state) => (checked
+        ? addItem(state, listId, entryOf(card)).state
+        : removeEntry(state, listId, entryOf(card)))),
+      onCreate: (name) => mutateCard(card, (state) => {
+        const { state: withList, list } = createList(state, name);
+        return addItem(withList, list.id, entryOf(card)).state;
+      }),
+      onManage: () => api.runtime.sendMessage({ type: 'open-lists' }),
+    },
+  });
+  card.control.classList.add('ptcg-list-control--card');
+  element.classList.add('ptcg-card');
+  element.append(card.control);
+  cards.set(element, card);
+  return card;
+}
+
+/** Give every search result that has none a control. Results are redrawn on paging and filtering. */
+function syncSearch() {
+  let added = false;
+  for (const element of document.querySelectorAll(SEARCH_CARD_SELECTOR)) {
+    if (cards.has(element) || element.querySelector(`.${CONTROL_CLASS}`)) continue;
+    if (decorate(element)) added = true;
+  }
+  if (added) refresh();
+}
 
 function attach(anchor) {
   product = parseProductPage(document, location.href);
@@ -112,7 +195,10 @@ function sync() {
     control = null;
     product = null;
   }
-  if (!productIdFromUrl(location.href)) return;
+  if (!productIdFromUrl(location.href)) {
+    syncSearch();
+    return;
+  }
 
   const header = findHeader();
   if (control && control.isConnected) {

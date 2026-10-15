@@ -71,6 +71,31 @@ the lists it belongs in, or type a name to start a new one — creating a list
 from that panel saves the card into it straight away. The button then reads
 "On 2 watch lists", so you can see at a glance what you have already kept.
 
+**From a search page.** Every result on a TCGplayer search or browse page (grid
+view) gets its own small **Add to watch list** button in its bottom right
+corner, so cards can be saved without opening each one. A search card does not
+say which printing it is (Holofoil, Reverse Holofoil…), and many cards come in
+more than one under the same product, at different prices. So clicking it:
+
+1. shows "Checking printings…" while it asks TCGplayer which printings the card
+   is listed in;
+2. if there is more than one, offers them, most-listed first, with their
+   listing counts ("Normal · 1655 listings", "Reverse Holofoil · 997
+   listings"), and waits for a choice;
+3. then shows your lists, headed by the printing chosen ("Printing: Normal ·
+   Change printing"), to tick or start one, as on a product page.
+
+A card listed in only one printing skips the choice. One with nothing listed is
+saved as Near Mint in any printing, and the panel says so. If the printings
+cannot be read, it says so, with **Try again**, and nothing is saved. The
+button says "On 2 watch lists" when the card, in any printing, is on two.
+
+**Several printings of one card.** A list can hold the same card in more than
+one printing; each is its own entry, with its own Ask, trend and price target,
+and its printing shown after the rarity. A product page saves the printing that
+page is showing. Cards saved before printings were recorded still count as
+saved, from either kind of page.
+
 TCGplayer opens a product from a search or from another product without
 reloading the page, so the extension's script runs on every `www.tcgplayer.com`
 page and waits for a product's address; on other pages it adds nothing.
@@ -131,6 +156,25 @@ lower (red), "▲" when it is higher (green). While the Ask has not moved,
 nothing is added. A card that is not selling has no sales for the price trend to
 move on, but its Ask still rises and falls, and that is news about the market.
 
+- **An earlier Ask is judged against what the card sold for.** Listings turn up
+  at absurd prices (a seller's mistake, withdrawn or cancelled before anyone is
+  sold it), and a $33 card set against a $4 listing would read "+663%" for as
+  long as its real price stayed put. So before an earlier Ask is compared with,
+  it is checked against the card's sales history: one **under half the cheapest
+  sale of the last 30 days** (with shipping, same condition and printing) is
+  taken for a mistake and dropped, and the Ask is compared with the real price
+  before it instead.
+  - A listing that was **bought** is, by that fact, among the sales, so it is
+    kept however briefly it was listed.
+  - A seller's ordinary change of price is kept: it was within what the card
+    sells for.
+  - A card with **no sales in 30 days** has nothing to judge by, so every Ask
+    is believed.
+  - While a mistaken listing is live it is still shown as the Ask, with the
+    drop marked: it is, at that moment, the cheapest copy for sale.
+  - The check uses the same sales history as the price trend (cached for an
+    hour), and is made once per earlier Ask. If the history cannot be read, no
+    change is shown until it can.
 - Only two prices are kept for a card and condition, in this browser: the
   current Ask and the one before it, as price plus shipping, to the cent. The
   mark stays until the Ask moves again; hover the arrow for the previous Ask.

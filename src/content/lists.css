@@ -57,6 +57,40 @@
 }
 .ptcg-list-manage { background: transparent; color: #0f172a; margin-top: 8px; padding: 4px 0; text-decoration: underline; }
 
+/* ---- on a search page's product card ------------------------------------------------ */
+/* The card is a fixed size and cuts off what overflows it, so the button sits over its bottom
+   right corner, taking no room; the panel opens on the page (see `floating`). */
+.ptcg-card { position: relative; }
+.ptcg-list-control--card { bottom: 10px; margin: 0; position: absolute; right: 10px; z-index: 2; }
+.ptcg-list-control--card .ptcg-list-button { box-shadow: 0 1px 3px rgb(15 23 42 / 18%); font-size: 12px; padding: 4px 10px; }
+.ptcg-list-panel--floating { left: 0; margin-top: 0; min-width: 240px; position: absolute; top: 0; }
+
+/* ---- choosing a printing ---------------------------------------------------------------- */
+.ptcg-printing-loading { align-items: center; color: #475569; display: flex; gap: 8px; margin: 2px 0; }
+.ptcg-spinner {
+  animation: ptcg-spin 0.8s linear infinite; border: 2px solid #cbd5e1; border-radius: 50%;
+  border-top-color: #0f172a; display: inline-block; height: 14px; width: 14px;
+}
+@keyframes ptcg-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ptcg-spinner { animation-duration: 2.4s; } }
+.ptcg-printing-ask { font-weight: 600; margin: 0 0 6px; }
+.ptcg-printing-choices { display: flex; flex-direction: column; gap: 4px; }
+.ptcg-printing-choice {
+  align-items: baseline; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; color: inherit;
+  cursor: pointer; display: flex; font: inherit; gap: 8px; justify-content: space-between; padding: 6px 8px; text-align: left;
+}
+.ptcg-printing-choice:hover { background: #eef2f7; }
+.ptcg-printing-choice[aria-current="true"] { border-color: #0f172a; }
+.ptcg-printing-choice small { color: #64748b; }
+.ptcg-printing-chosen { border-bottom: 1px solid #e2e8f0; color: #475569; font-size: 13px; margin: 0 0 8px; padding-bottom: 6px; }
+.ptcg-printing-chosen span { color: #0f172a; font-weight: 600; }
+.ptcg-printing-change, .ptcg-printing-retry {
+  background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline;
+}
+.ptcg-printing-retry { margin-top: 6px; }
+.ptcg-printing-note { color: #64748b; display: block; margin-top: 4px; }
+.ptcg-printing[hidden], .ptcg-printing-chosen[hidden], .ptcg-list-step[hidden] { display: none; }
+
 @media (prefers-color-scheme: dark) {
   .ptcg-list-panel { background: #0f172a; border-color: #334155; color: #e2e8f0; }
   .ptcg-list-row:hover { background: #1e293b; }
@@ -64,4 +98,11 @@
   .ptcg-list-panel form button { background: #38bdf8; color: #0f172a; }
   .ptcg-list-manage { color: #e2e8f0; }
   .ptcg-list-error { background: #450a0a; color: #fecaca; }
+  .ptcg-printing-choice { background: #1e293b; border-color: #475569; }
+  .ptcg-printing-choice:hover { background: #273449; }
+  .ptcg-printing-choice[aria-current="true"] { border-color: #e2e8f0; }
+  .ptcg-printing-chosen { border-color: #334155; color: #94a3b8; }
+  .ptcg-printing-chosen span { color: #e2e8f0; }
+  .ptcg-printing-loading { color: #94a3b8; }
+  .ptcg-spinner { border-color: #475569; border-top-color: #e2e8f0; }
 }

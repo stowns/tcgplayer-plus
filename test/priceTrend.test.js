@@ -331,7 +331,7 @@ test('a trend made without windows still gives its headline line', () => {
 });
 
 test('the rules version changed with the windows, so cached trends are worked out again', () => {
-  assert.equal(TREND.VERSION, 3);
+  assert.equal(TREND.VERSION, 4);
 });
 
 // ---- thirty days, from the 90-day history ---------------------------------------------
@@ -377,4 +377,27 @@ test('a chosen duration that has not arrived yet is a line saying so, not a miss
   assert.deepEqual(lines.map((l) => [l.days, l.shownDays, l.reason, l.direction, l.headline]), [[30, 30, 'pending', 'unknown', true], [7, 7, 'ok', 'down', false]]);
   const failed = { ...month, windows: { ...month.windows, 30: { windowDays: 30, direction: 'unknown', pct: null, reason: 'unavailable' } } };
   assert.equal(selectTrendLines(failed, [30])[0].reason, 'unavailable');
+});
+
+// ---- the least the card sold for, which an earlier Ask is judged against ---------------------
+
+test('each day keeps its cheapest sale with shipping, falling back to the price alone', () => {
+  const days = normalizeBuckets([
+    { bucketStartDate: '2026-09-30', marketPrice: '32', transactionCount: '2', lowSalePrice: '30.5', lowSalePriceWithShipping: '31.99' },
+    { bucketStartDate: '2026-09-29', marketPrice: '32', transactionCount: '1', lowSalePrice: '29' },
+    { bucketStartDate: '2026-09-28', marketPrice: '32', transactionCount: '0', lowSalePrice: '0', lowSalePriceWithShipping: '0' },
+  ]);
+  assert.deepEqual(days.map((d) => d.low), [0, 29, 31.99]);
+});
+
+test('the lowest sale is the cheapest of the days that had sales; a day with none does not count', () => {
+  const rows = (lows) => lows.map(([low, tx], i) => ({
+    bucketStartDate: `2026-09-${String(30 - i).padStart(2, '0')}`, marketPrice: '32', quantitySold: String(tx), transactionCount: String(tx),
+    lowSalePrice: String(low), lowSalePriceWithShipping: String(low),
+  }));
+  assert.equal(computeTrend(normalizeBuckets(rows([[33.33, 2], [32.02, 1], [39.99, 3]]))).lowestSale, 32.02);
+  // A stray low on a day nothing sold is a leftover, not a sale.
+  assert.equal(computeTrend(normalizeBuckets(rows([[33.33, 2], [4.39, 0], [39.99, 3]]))).lowestSale, 33.33);
+  assert.equal(computeTrend(normalizeBuckets(rows([[0, 2], [0, 1]]))).lowestSale, null, 'the feed gave no lows');
+  assert.equal(computeTrend([]).lowestSale, undefined, 'no sales, no trend windows, nothing to judge by');
 });

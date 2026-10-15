@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { listingsUrl, listingsBody, parseLowestListing } from './tcgplayerListings.js';
+import {
+  listingsUrl, listingsBody, parseLowestListing, printingsBody, parsePrintings,
+} from './tcgplayerListings.js';
 import { splitConditionVariant } from './tcgplayerHistory.js';
 
 /**
@@ -32,7 +34,7 @@ export async function lookupListing(item, deps) {
   const ask = async (condition) => {
     const json = await deps.postJson(listingsUrl(item.productId), listingsBody(condition));
     if (!json || !Array.isArray(json.results)) throw new Error('not the listings feed');
-    return parseLowestListing(json);
+    return parseLowestListing(json, { productId: item.productId });
   };
 
   let lowest;
@@ -50,4 +52,20 @@ export async function lookupListing(item, deps) {
 
   const checkedAt = (deps.now || Date.now)();
   return lowest ? { status: 'ok', ...lowest, checkedAt } : { status: 'none', checkedAt };
+}
+
+/**
+ * The printings a product is listed in, most-listed first.
+ * @param {{productId: string}} item
+ * @param {{postJson: (url: string, body: object) => Promise<object>}} deps
+ * @returns {Promise<{status: 'ok', printings: {name: string, listings: number}[]} | {status: 'unavailable'}>}
+ */
+export async function lookupPrintings(item, deps) {
+  if (!item || !/^\d+$/.test(String(item.productId ?? ''))) return { status: 'unavailable' };
+  try {
+    const printings = parsePrintings(await deps.postJson(listingsUrl(item.productId), printingsBody()));
+    return printings ? { status: 'ok', printings } : { status: 'unavailable' };
+  } catch {
+    return { status: 'unavailable' };
+  }
 }

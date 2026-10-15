@@ -1172,3 +1172,8 @@ test('updateListTotal redraws the total in place as Asks arrive', () => {
   assert.equal(container.querySelectorAll('.list__total').length, 1, 'replaced, not added');
   assert.equal(updateListTotal(container, { ...list, id: 'not-shown' }, asks), false);
 });
+
+test('an entry\'s subtitle names its printing when one was chosen, so two printings can be told apart', () => {
+  assert.equal(itemSubtitle({ setName: 'SV: 151', number: '001/165', rarity: 'Common', printing: 'Reverse Holofoil' }), 'SV: 151 · 001/165 · Common · Reverse Holofoil');
+  assert.equal(itemSubtitle({ setName: 'SV: 151', number: '001/165', rarity: 'Common' }), 'SV: 151 · 001/165 · Common');
+});

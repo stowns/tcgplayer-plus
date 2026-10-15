@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listingsUrl, listingsBody, parseLowestListing, listingUrl, isListingUrl } from '../src/lib/tcgplayerListings.js';
+import {
+  listingsUrl, listingsBody, parseLowestListing, listingUrl, isListingUrl, printingsBody, parsePrintings,
+} from '../src/lib/tcgplayerListings.js';
 import { LAPRAS_LISTINGS, NO_LISTINGS } from './fixtures/tcgplayerListings.js';
 
 test('listingsUrl targets the product and refuses anything that is not a numeric id', () => {
@@ -122,4 +124,39 @@ test('only addresses of that shape are accepted for a link', () => {
 test('the cheapest listing carries its own link', () => {
   const json = { results: [{ totalResults: 2, results: [{ ...ROW, price: 12.87, shippingPrice: 0, sellerKey: 'other' }, ROW] }] };
   assert.equal(parseLowestListing(json).url, 'https://www.tcgplayer.com/product/535952?seller=d8035033&Condition=Near+Mint&Printing=Holofoil&Language=English&page=1');
+});
+
+test('a row that names another product is not this card\'s price', () => {
+  const rows = [{ ...ROW, productId: 999, price: 3.4, shippingPrice: 0.99 }, { ...ROW, price: 32.28, shippingPrice: 1.22 }];
+  const json = { results: [{ totalResults: 2, results: rows }] };
+  assert.equal(parseLowestListing(json, { productId: '535952' }).price, 32.28);
+  assert.equal(parseLowestListing(json).price, 3.4, 'nothing to check against, so nothing is left out');
+  // A row that does not say which product it is is taken at its word.
+  const bare = { results: [{ totalResults: 1, results: [{ price: 5, listingType: 'standard', shippingPrice: 0 }] }] };
+  assert.equal(parseLowestListing(bare, { productId: '535952' }).price, 5);
+  assert.equal(parseLowestListing({ results: [{ totalResults: 1, results: [rows[0]] }] }, { productId: 535952 }), null);
+});
+
+// ---- which printings a product is listed in ---------------------------------------------
+
+test('the printings query is the listings search with no condition, asking only for the tally by printing', () => {
+  const body = printingsBody();
+  assert.deepEqual(body.filters.term, { sellerStatus: 'Live', channelId: 0, listingType: 'standard' });
+  assert.deepEqual(body.aggregations, ['printing']);
+  assert.equal(body.size, 1);
+});
+
+test('printings come back most-listed first, with their listing counts', () => {
+  const json = { results: [{ totalResults: 324, results: [], aggregations: { printing: [
+    { value: 'Reverse Holofoil', count: 45 }, { value: 'Holofoil', count: 279 },
+  ] } }] };
+  assert.deepEqual(parsePrintings(json), [{ name: 'Holofoil', listings: 279 }, { name: 'Reverse Holofoil', listings: 45 }]);
+});
+
+test('nothing listed is no printings; junk entries are left out; a response that is not the feed is null', () => {
+  assert.deepEqual(parsePrintings({ results: [{ totalResults: 0, results: [], aggregations: { printing: [] } }] }), []);
+  assert.deepEqual(parsePrintings({ results: [{ totalResults: 0, results: [] }] }), []);
+  assert.deepEqual(parsePrintings({ results: [{ aggregations: { printing: [null, { value: '' , count: 3 }, { value: 'Normal', count: 0 }, { value: 'Normal ', count: 'x' }, { value: ' 1st  Edition ', count: 2 }, { value: '1st Edition', count: 1 }] } }] }),
+    [{ name: '1st Edition', listings: 3 }], 'tidied and added up');
+  for (const bad of [null, {}, { results: 'x' }, { results: [] }, { results: [null] }]) assert.equal(parsePrintings(bad), null);
 });

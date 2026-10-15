@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   emptyState, createList, renameList, deleteList, addItem, removeItem,
   listsContaining, itemKey, countItems, LIST_LIMITS, setListSort, listSort,
+  sameEntry, findEntry, effectivePrinting, listsHoldingProduct, removeEntry, cleanPrinting,
 } from '../src/lib/lists.js';
 
 const ITEM = {
@@ -178,4 +179,75 @@ test('setListSort refuses a list that does not exist, and never mutates the old 
   assert.throws(() => setListSort(state, 'missing', { key: 'ask', dir: 'asc' }), /no longer exists/);
   setListSort(state, state.lists[0].id, { key: 'ask', dir: 'asc' });
   assert.equal('sort' in state.lists[0], false);
+});
+
+// ---- printings: several of one product, kept apart -------------------------------------------
+
+const printed = (printing, extra = {}) => ({ ...ITEM, printing, ...extra });
+const fromPage = (condition) => ({ ...ITEM, priceAtSave: { market: 1, condition } });
+
+test('an entry with a printing is keyed by it; one without keeps the key it always had', () => {
+  assert.equal(itemKey(ITEM), '642621:english');
+  assert.equal(itemKey(printed('Reverse Holofoil')), '642621:english:reverse holofoil');
+  assert.equal(itemKey(printed('  Holofoil ')), '642621:english:holofoil');
+  assert.equal(itemKey(printed('')), '642621:english');
+  assert.equal(cleanPrinting(' 1st  Edition  Holofoil '), '1st Edition Holofoil');
+  assert.equal(cleanPrinting(5), '');
+  assert.equal(cleanPrinting('x'.repeat(80)).length, 60);
+});
+
+test('an entry follows the printing chosen for it, or else the one on the page it was saved from', () => {
+  assert.equal(effectivePrinting(printed('Reverse Holofoil')), 'Reverse Holofoil');
+  assert.equal(effectivePrinting(fromPage('Near Mint Holofoil')), 'Holofoil');
+  assert.equal(effectivePrinting(printed('Reverse Holofoil', { priceAtSave: { condition: 'Near Mint Holofoil' } })), 'Reverse Holofoil', 'the chosen one wins');
+  assert.equal(effectivePrinting(ITEM), '');
+  assert.equal(effectivePrinting(null), '');
+});
+
+test('two printings of one product are two entries on one list', () => {
+  let { state } = createList(emptyState(), 'Watching');
+  const id = state.lists[0].id;
+  state = addItem(state, id, printed('Holofoil')).state;
+  const second = addItem(state, id, printed('Reverse Holofoil'));
+  assert.equal(second.added, true);
+  assert.deepEqual(second.state.lists[0].items.map((i) => [i.key, i.printing]), [
+    ['642621:english:reverse holofoil', 'Reverse Holofoil'], ['642621:english:holofoil', 'Holofoil'],
+  ]);
+});
+
+test('the same printing saved two ways is one entry: chosen on a search page, or read from its product page', () => {
+  let { state } = createList(emptyState(), 'Watching');
+  const id = state.lists[0].id;
+  state = addItem(state, id, fromPage('Near Mint Holofoil')).state;
+  const again = addItem(state, id, printed('Holofoil'));
+  assert.equal(again.added, false);
+  assert.equal(again.state.lists[0].items.length, 1);
+  assert.equal(sameEntry(fromPage('Lightly Played Holofoil'), printed('holofoil')), true, 'condition aside, and whatever the case');
+  assert.equal(sameEntry(fromPage('Near Mint Holofoil'), printed('Reverse Holofoil')), false);
+});
+
+test('an entry whose printing was never known stands for the product in any printing', () => {
+  assert.equal(sameEntry(ITEM, printed('Reverse Holofoil')), true);
+  assert.equal(sameEntry(printed('Holofoil'), ITEM), true);
+  assert.equal(sameEntry({ ...ITEM, language: 'Japanese' }, ITEM), false, 'another language is another thing');
+  assert.equal(sameEntry({ ...ITEM, productId: '1' }, ITEM), false);
+  assert.equal(sameEntry(null, ITEM), false);
+});
+
+test('which lists hold a printing, which hold the product at all, and taking one printing off', () => {
+  let state = emptyState();
+  const a = createList(state, 'A'); state = a.state;
+  const b = createList(state, 'B'); state = b.state;
+  state = addItem(state, a.list.id, printed('Holofoil')).state;
+  state = addItem(state, b.list.id, printed('Reverse Holofoil')).state;
+  assert.deepEqual(listsContaining(state, printed('Holofoil')), [a.list.id]);
+  assert.deepEqual(listsContaining(state, '642621:english:reverse holofoil'), [b.list.id], 'a stored key still works');
+  assert.deepEqual(listsHoldingProduct(state, ITEM).sort(), [a.list.id, b.list.id].sort());
+  assert.deepEqual(listsHoldingProduct(state, { ...ITEM, language: 'Japanese' }), []);
+  assert.equal(findEntry(state.lists.find((l) => l.id === a.list.id), printed('Holofoil')).key, '642621:english:holofoil');
+  assert.equal(findEntry(undefined, ITEM), undefined);
+
+  const off = removeEntry(state, a.list.id, fromPage('Near Mint Holofoil'));
+  assert.equal(off.lists.find((l) => l.id === a.list.id).items.length, 0, 'removed whichever way it is described');
+  assert.equal(removeEntry(off, a.list.id, printed('Holofoil')), off, 'nothing there: nothing changes');
 });

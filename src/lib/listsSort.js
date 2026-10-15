@@ -37,19 +37,23 @@ export const needsAsk = (key) => key === 'ask';
 export function watchCondition(item) {
   const saved = item && item.priceAtSave ? item.priceAtSave.condition : '';
   const { condition, variant } = splitConditionVariant(saved);
-  if (condition === 'Unopened') return ['Unopened', variant].filter(Boolean).join(' ');
-  return ['Near Mint', variant].filter(Boolean).join(' ');
+  // A printing chosen when it was saved (from a search page) says which one it is.
+  const printing = (item && typeof item.printing === 'string' && item.printing.trim()) || variant;
+  if (condition === 'Unopened') return ['Unopened', printing].filter(Boolean).join(' ');
+  return ['Near Mint', printing].filter(Boolean).join(' ');
 }
 
 /**
  * What to ask the background for a watched card's Ask. With no condition on record
- * the product may be sealed, which has no Near Mint; `orSealed` says to look there
- * when Near Mint has nothing listed.
+ * or printing the product may be sealed, which has no Near Mint; `orSealed` says to
+ * look there when Near Mint has nothing listed.
  */
 export function askQuery(item) {
   const saved = item && item.priceAtSave ? item.priceAtSave.condition : '';
   const query = { productId: item.productId, condition: watchCondition(item) };
-  if (!splitConditionVariant(saved).condition) query.orSealed = true;
+  // Not part of the listing search; it says which printing's sales an earlier Ask is judged against.
+  if (item.language) query.language = item.language;
+  if (!splitConditionVariant(saved).condition && !(typeof item.printing === 'string' && item.printing.trim())) query.orSealed = true;
   return query;
 }
 

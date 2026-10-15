@@ -1,5 +1,5 @@
 /*
- * TCGPlayer+ — reading a TCGplayer product page.
+ * TCGPlayer+ — reading TCGplayer's product pages, and the product cards on its search pages.
  * Copyright (C) 2026  Simon Townsend
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -96,5 +96,53 @@ export function parseProductPage(doc, url) {
     imageUrl: (doc.querySelector('meta[property="og:image"]') || {}).content || '',
     url: canonicalProductUrl(url),
     priceAtSave,
+  };
+}
+
+// ---- a product card on a search or browse page ------------------------------------------
+
+/** The cards of a search page's results, as TCGplayer draws them (grid view). */
+export const SEARCH_CARD_SELECTOR = '.search-result .product-card';
+
+/**
+ * A watch-list entry from one product card on a search page. The card has the
+ * product's link, name, set, rarity, number, Market Price and "N listings from $X",
+ * but not its printing: that is chosen when it is saved.
+ * @param {Element} card a `.product-card`
+ * @param {string} pageUrl the search page's address, which its links are relative to
+ * @returns {object|null} null when the card has no product link
+ */
+export function parseSearchCard(card, pageUrl) {
+  if (!card) return null;
+  const link = card.querySelector('a[href*="/product/"]');
+  if (!link) return null;
+  let href;
+  try {
+    href = new URL(link.getAttribute('href'), pageUrl).toString();
+  } catch {
+    return null;
+  }
+  const productId = productIdFromUrl(href);
+  if (!productId) return null;
+
+  const title = splitTitle(text(card.querySelector('.product-card__title')));
+  // "Illustration Rare, " and "#172/165", in two spans.
+  const parts = [...card.querySelectorAll('.product-card__rarity__variant span')].map(text);
+  const rarity = (parts.find((p) => !p.startsWith('#')) || '').replace(/,\s*$/, '').trim();
+  const number = ((parts.find((p) => p.startsWith('#')) || '').replace(/^#/, '') || title.number).trim();
+  const market = parseMoney(text(card.querySelector('.product-card__market-price--value')));
+  const asLowAs = parseMoney(text(card.querySelector('.inventory__price-with-shipping, .inventory__price')));
+
+  return {
+    productId,
+    language: languageFromUrl(href),
+    name: title.name || text(card.querySelector('.product-card__title')),
+    number,
+    setName: text(card.querySelector('.product-card__set-name__variant, .product-card__set-name')),
+    category: '',
+    rarity,
+    imageUrl: '',
+    url: canonicalProductUrl(href),
+    priceAtSave: (market || asLowAs) ? { market, lowest: null, condition: '', asLowAs } : null,
   };
 }

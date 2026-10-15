@@ -20,7 +20,8 @@ import { listTotal } from './listTotal.js';
 import { PAGE_SIZES, pageOf, parsePageSize, resolveSelection } from './listsPage.js';
 
 export function itemSubtitle(item) {
-  return [item.setName, item.number, item.rarity].filter(Boolean).join(' · ');
+  // A printing chosen when it was saved, so two printings of one card can be told apart.
+  return [item.setName, item.number, item.rarity, item.printing].filter(Boolean).join(' · ');
 }
 
 export function priceSummary(price) {

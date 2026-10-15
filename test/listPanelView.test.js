@@ -191,3 +191,166 @@ test('a closed panel keeps no listeners on the page', () => {
   d.body.click();
   assert.deepEqual([...added].sort(), [...removed].sort(), 'everything added while open is removed on close');
 });
+
+// ---- choosing a printing first (search pages) -------------------------------------------------
+
+const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const printingControl = (answer, extra = {}) => {
+  const d = doc();
+  const calls = { loads: 0, chosen: [] };
+  const control = renderSaveControl(d, {
+    lists, savedIn: [], choosePrinting: true,
+    handlers: {
+      onLoadPrintings: () => { calls.loads += 1; return typeof answer === 'function' ? answer() : answer; },
+      onChoosePrinting: (name) => calls.chosen.push(name),
+      ...extra,
+    },
+  });
+  return { d, control, calls };
+};
+const step = (control) => ({
+  printing: control.querySelector('.ptcg-printing'),
+  chosen: control.querySelector('.ptcg-printing-chosen'),
+  lists: control.querySelector('.ptcg-list-step'),
+});
+const TWO = { status: 'ok', printings: [{ name: 'Holofoil', listings: 279 }, { name: 'Reverse Holofoil', listings: 1 }] };
+
+test('opening shows a spinner while the printings are fetched, then the choice, most-listed first', async () => {
+  const wait = deferred();
+  const { d, control, calls } = printingControl(() => wait.promise);
+  open(d, control);
+  assert.equal(calls.loads, 1);
+  assert.equal(step(control).printing.hidden, false);
+  assert.equal(step(control).lists.hidden, true, 'no lists until a printing is chosen');
+  const loading = control.querySelector('.ptcg-printing-loading');
+  assert.match(loading.textContent, /Checking printings…/);
+  assert.equal(loading.getAttribute('role'), 'status');
+  assert.ok(loading.querySelector('.ptcg-spinner'));
+
+  wait.resolve(TWO);
+  await tick();
+  assert.equal(control.querySelector('.ptcg-printing-ask').textContent, 'Which printing?');
+  assert.deepEqual([...control.querySelectorAll('.ptcg-printing-choice')].map((b) => b.textContent), ['Holofoil279 listings', 'Reverse Holofoil1 listing']);
+  assert.equal(calls.chosen.length, 0, 'waiting for a choice');
+});
+
+test('choosing a printing shows the lists, headed by it, with a way back', async () => {
+  const { d, control, calls } = printingControl(TWO);
+  open(d, control);
+  await tick();
+  control.querySelector('.ptcg-printing-choice[data-printing="Reverse Holofoil"]').click();
+  assert.deepEqual(calls.chosen, ['Reverse Holofoil']);
+  assert.equal(control.printing(), 'Reverse Holofoil');
+  assert.equal(step(control).lists.hidden, false);
+  assert.equal(step(control).printing.hidden, true);
+  assert.match(step(control).chosen.textContent, /^Printing: Reverse Holofoil · Change printing$/);
+  assert.equal(control.querySelectorAll('.ptcg-list-row').length, 2);
+
+  control.querySelector('.ptcg-printing-change').click();
+  assert.equal(step(control).printing.hidden, false, 'back to the choice');
+  assert.equal(control.querySelector('.ptcg-printing-choice[aria-current="true"]').getAttribute('data-printing'), 'Reverse Holofoil');
+  control.querySelector('.ptcg-printing-choice[data-printing="Holofoil"]').click();
+  assert.deepEqual(calls.chosen, ['Reverse Holofoil', 'Holofoil']);
+  assert.equal(calls.loads, 1, 'not fetched again');
+});
+
+test('one printing needs no choice; none listed is saved as any printing, and says so', async () => {
+  const one = printingControl({ status: 'ok', printings: [{ name: 'Holofoil', listings: 279 }] });
+  open(one.d, one.control);
+  await tick();
+  assert.deepEqual(one.calls.chosen, ['Holofoil']);
+  assert.equal(step(one.control).lists.hidden, false);
+  assert.equal(step(one.control).chosen.textContent, 'Printing: Holofoil', 'nothing to change to');
+
+  const none = printingControl({ status: 'ok', printings: [] });
+  open(none.d, none.control);
+  await tick();
+  assert.deepEqual(none.calls.chosen, ['']);
+  assert.equal(none.control.printing(), '');
+  assert.match(step(none.control).chosen.textContent, /^Printing: any.*watched as Near Mint in any printing\./);
+});
+
+test('when the printings cannot be found it says so, and Try again asks again', async () => {
+  let answer = { status: 'unavailable' };
+  const { d, control, calls } = printingControl(() => answer);
+  open(d, control);
+  await tick();
+  assert.match(control.querySelector('.ptcg-printing .ptcg-list-error').textContent, /Could not find out which printings/);
+  assert.equal(step(control).lists.hidden, true);
+  answer = TWO;
+  control.querySelector('.ptcg-printing-retry').click();
+  await tick();
+  assert.equal(calls.loads, 2);
+  assert.equal(control.querySelectorAll('.ptcg-printing-choice').length, 2);
+
+  const throwing = printingControl(() => Promise.reject(new Error('gone')));
+  open(throwing.d, throwing.control);
+  await tick();
+  assert.ok(throwing.control.querySelector('.ptcg-printing-retry'), 'a failed message is a failure, not a crash');
+});
+
+test('closing and opening again keeps the printing chosen, and does not fetch again', async () => {
+  const { d, control, calls } = printingControl(TWO);
+  open(d, control);
+  await tick();
+  control.querySelector('.ptcg-printing-choice').click();
+  const button = control.querySelector(`.${BUTTON_CLASS}`);
+  button.click();
+  button.click();
+  assert.equal(calls.loads, 1);
+  assert.equal(step(control).lists.hidden, false);
+});
+
+test('the button can count every printing of the product while the ticks are for one', () => {
+  const { control } = printingControl(TWO);
+  control.update({ lists, savedIn: [], buttonCount: 2 });
+  assert.equal(control.querySelector(`.${BUTTON_CLASS}`).textContent, 'On 2 watch lists');
+  assert.equal(control.getAttribute('data-saved'), 'true');
+});
+
+test('clicks on the control never reach the card link it sits on', () => {
+  const d = doc();
+  const link = d.createElement('a');
+  link.href = '/product/1';
+  const reached = [];
+  link.addEventListener('click', () => reached.push('link'));
+  d.body.append(link);
+  const control = renderSaveControl(d, { lists, savedIn: [], handlers: {} });
+  link.append(control);
+  const event = new d.defaultView.MouseEvent('click', { bubbles: true, cancelable: true });
+  control.querySelector(`.${BUTTON_CLASS}`).dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  control.querySelector('.ptcg-list-row input').click();
+  assert.deepEqual(reached, []);
+});
+
+test('a product page\'s control has no printing step', () => {
+  const d = doc();
+  const control = renderSaveControl(d, { lists, savedIn: [], handlers: {} });
+  open(d, control);
+  assert.equal(step(control).printing.hidden, true);
+  assert.equal(step(control).chosen.hidden, true);
+  assert.equal(step(control).lists.hidden, false);
+  assert.equal(control.printing(), '');
+});
+
+test('a floating panel opens on the page under its button, and closing takes it off the page', () => {
+  const d = doc();
+  const control = renderSaveControl(d, { lists, savedIn: [], handlers: {}, floating: true });
+  d.body.append(control);
+  assert.equal(control.querySelector(`.${PANEL_CLASS}`), null, 'not inside the control');
+  control.querySelector(`.${BUTTON_CLASS}`).click();
+  assert.equal(control.panel.parentElement, d.body);
+  assert.equal(control.panel.hidden, false);
+  assert.match(control.panel.style.left, /^\d+px$/);
+  // A click inside the floating panel is not a click outside it.
+  control.panel.querySelector('.ptcg-list-row input').click();
+  assert.equal(control.panel.hidden, false);
+  d.body.click();
+  assert.equal(control.panel.isConnected, false, 'gone when it closes');
+  control.querySelector(`.${BUTTON_CLASS}`).click();
+  control.close();
+  assert.equal(control.panel.isConnected, false);
+  assert.doesNotThrow(() => control.close(), 'closing a closed one is fine');
+});

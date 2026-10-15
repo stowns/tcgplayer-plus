@@ -9,7 +9,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { emptyState, itemKey, LISTS_VERSION, LIST_LIMITS } from './lists.js';
+import {
+  emptyState, itemKey, cleanPrinting, LISTS_VERSION, LIST_LIMITS,
+} from './lists.js';
 import { parseSort } from './listsSort.js';
 
 export const LISTS_KEY = 'lists';
@@ -35,6 +37,7 @@ function sanitizeItem(raw) {
     imageUrl: str(raw.imageUrl, 500),
     url: str(raw.url, 500),
     priceAtSave: raw.priceAtSave && typeof raw.priceAtSave === 'object' ? raw.priceAtSave : null,
+    ...(cleanPrinting(raw.printing) ? { printing: cleanPrinting(raw.printing) } : {}),
     note: str(raw.note, LIST_LIMITS.maxNoteLength),
     savedAt: str(raw.savedAt, 40),
   };

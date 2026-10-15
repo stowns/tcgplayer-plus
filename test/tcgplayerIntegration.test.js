@@ -8,10 +8,11 @@ import { readFile } from 'node:fs/promises';
 import { dist, apiName, messageBus, forEachBrowser } from './helpers/extensionApi.js';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { PRODUCT_PAGE, PRODUCT_URL } from './fixtures/tcgplayer.js';
+import { searchPage, searchCard, SEARCH_URL, CATERPIE, BULBASAUR } from './fixtures/tcgplayerSearch.js';
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
-async function load(initial = {}, page = PRODUCT_PAGE, url = PRODUCT_URL) {
+async function load(initial = {}, page = PRODUCT_PAGE, url = PRODUCT_URL, { answer = () => ({}) } = {}) {
   const dom = new JSDOM(page, {
     url, runScripts: 'outside-only', pretendToBeVisual: true,
     virtualConsole: new VirtualConsole(),
@@ -21,7 +22,7 @@ async function load(initial = {}, page = PRODUCT_PAGE, url = PRODUCT_URL) {
   const listeners = [];
   const messages = [];
   window[apiName()] = {
-    runtime: { sendMessage: async (m) => { messages.push(m); return {}; } },
+    runtime: { sendMessage: async (m) => { messages.push(m); return answer(m); } },
     storage: {
       local: {
         get: async (key) => (key in data ? { [key]: data[key] } : {}),
@@ -143,6 +144,156 @@ test('arriving at a product from a search, without a reload, still gets the butt
   document.body.innerHTML = '<div class="search-layout"></div>';
   await settle(80);
   assert.equal(button(document), null);
+});
+
+// ---- the cards of a search page -------------------------------------------------------------
+
+const PRINTINGS = {
+  517016: [{ value: 'Holofoil', count: 279 }],
+  502445: [{ value: 'Reverse Holofoil', count: 300 }, { value: 'Normal', count: 612 }],
+};
+const answerPrintings = (m) => (m.type === 'product-printings'
+  ? { status: 'ok', printings: (PRINTINGS[m.item.productId] || []).map((p) => ({ name: p.value, listings: p.count })).sort((a, b) => b.listings - a.listings) }
+  : {});
+const openSearch = (initial = {}, options = {}) => load(initial, searchPage(), SEARCH_URL, { answer: answerPrintings, ...options });
+const cardOf = (d, name) => [...d.querySelectorAll('.search-result .product-card')].find((c) => c.textContent.includes(name));
+// Compared as text: these were made in the page's own JavaScript realm.
+const same = (actual, expected, message) => assert.equal(JSON.stringify(actual), JSON.stringify(expected), message);
+const watchList = () => ({ lists: { version: 1, lists: [{ id: 'a', name: 'Watchlist', items: [] }, { id: 'b', name: 'Trades', items: [] }] } });
+// A search card's panel opens on the page, not inside the card.
+const panelOf = (card) => card.querySelector('.ptcg-list-control').panel;
+const tickList = async (page, card, index = 0, checked = true) => {
+  const box = panelOf(card).querySelectorAll('input[type="checkbox"]')[index];
+  box.checked = checked;
+  box.dispatchEvent(new page.window.Event('change'));
+  await settle(40);
+};
+
+test('every result on a search page gets its own button, outside the card\'s link', async () => {
+  const { document } = await openSearch();
+  const cards = [...document.querySelectorAll('.search-result .product-card')];
+  assert.equal(cards.length, 2);
+  for (const card of cards) {
+    const control = card.querySelector(':scope > .ptcg-list-control.ptcg-list-control--card');
+    assert.ok(control, 'one each');
+    assert.equal(control.closest('a'), null, 'not inside the link, so it cannot open the product');
+    assert.equal(control.querySelector('.ptcg-list-button').textContent, 'Add to watch list');
+  }
+  assert.equal(document.querySelectorAll('.ptcg-list-control').length, 2);
+});
+
+test('a card with one printing goes straight to the lists, and is saved with that printing', async () => {
+  const page = await openSearch(watchList());
+  const card = cardOf(page.document, 'Caterpie');
+  card.querySelector('.ptcg-list-button').click();
+  await settle(40);
+  same(page.messages.filter((m) => m.type === 'product-printings'), [{ type: 'product-printings', item: { productId: '517016' } }]);
+  assert.equal(panelOf(card).querySelector('.ptcg-printing-chosen').textContent, 'Printing: Holofoil');
+  await tickList(page, card);
+  const [saved] = page.data.lists.lists[0].items;
+  same(
+    [saved.key, saved.productId, saved.name, saved.number, saved.setName, saved.rarity, saved.printing, saved.url],
+    ['517016:english:holofoil', '517016', 'Caterpie', '172/165', 'SV: Scarlet & Violet 151', 'Illustration Rare', 'Holofoil', 'https://www.tcgplayer.com/product/517016/pokemon-sv-scarlet-and-violet-151-caterpie-172-165'],
+  );
+  same(saved.priceAtSave, { market: 16.3, lowest: null, condition: '', asLowAs: 13.74 });
+  assert.equal(card.querySelector('.ptcg-list-button').textContent, 'On 1 watch list');
+});
+
+test('a card with several printings asks which, then saves that one; the other can be saved as well', async () => {
+  const page = await openSearch(watchList());
+  const card = cardOf(page.document, 'Bulbasaur');
+  card.querySelector('.ptcg-list-button').click();
+  await settle(40);
+  assert.deepEqual([...panelOf(card).querySelectorAll('.ptcg-printing-choice')].map((b) => b.getAttribute('data-printing')), ['Normal', 'Reverse Holofoil']);
+  assert.equal(panelOf(card).querySelector('.ptcg-list-step').hidden, true);
+  panelOf(card).querySelector('.ptcg-printing-choice[data-printing="Reverse Holofoil"]').click();
+  await settle(30);
+  await tickList(page, card);
+  panelOf(card).querySelector('.ptcg-printing-change').click();
+  panelOf(card).querySelector('.ptcg-printing-choice[data-printing="Normal"]').click();
+  await settle(30);
+  assert.equal(panelOf(card).querySelectorAll('input[type="checkbox"]')[0].checked, false, 'Normal is not on the list yet');
+  await tickList(page, card);
+  same(page.data.lists.lists[0].items.map((i) => [i.key, i.printing]), [
+    ['502445:english:normal', 'Normal'], ['502445:english:reverse holofoil', 'Reverse Holofoil'],
+  ]);
+  assert.equal(card.querySelector('.ptcg-list-button').textContent, 'On 1 watch list', 'one list holds the product');
+
+  // Unticking takes off only the printing shown.
+  await tickList(page, card, 0, false);
+  same(page.data.lists.lists[0].items.map((i) => i.printing), ['Reverse Holofoil']);
+});
+
+test('creating a list from a search card saves the card, in its printing, into it', async () => {
+  const page = await openSearch();
+  const card = cardOf(page.document, 'Caterpie');
+  card.querySelector('.ptcg-list-button').click();
+  await settle(40);
+  const form = panelOf(card).querySelector('form');
+  form.querySelector('input[type="text"]').value = 'Illustration rares';
+  form.dispatchEvent(new page.window.Event('submit', { cancelable: true }));
+  await settle(40);
+  assert.equal(page.data.lists.lists[0].name, 'Illustration rares');
+  assert.equal(page.data.lists.lists[0].items[0].printing, 'Holofoil');
+});
+
+test('a card already saved from its product page shows as saved, and is not added twice', async () => {
+  const fromProductPage = { key: '517016:english', productId: '517016', name: 'Caterpie', priceAtSave: { condition: 'Near Mint Holofoil' } };
+  const initial = watchList();
+  initial.lists.lists[0].items = [fromProductPage];
+  const page = await openSearch(initial);
+  const card = cardOf(page.document, 'Caterpie');
+  assert.equal(card.querySelector('.ptcg-list-button').textContent, 'On 1 watch list');
+  card.querySelector('.ptcg-list-button').click();
+  await settle(40);
+  assert.equal(panelOf(card).querySelectorAll('input[type="checkbox"]')[0].checked, true, 'the same printing');
+  await tickList(page, card, 0, true);
+  assert.equal(page.data.lists.lists[0].items.length, 1);
+});
+
+test('when the printings cannot be found the card says so, and nothing is saved', async () => {
+  const page = await openSearch(watchList(), { answer: () => ({ status: 'unavailable' }) });
+  const card = cardOf(page.document, 'Caterpie');
+  card.querySelector('.ptcg-list-button').click();
+  await settle(40);
+  assert.match(panelOf(card).querySelector('.ptcg-printing').textContent, /Could not find out which printings/);
+  assert.equal(panelOf(card).querySelector('.ptcg-list-step').hidden, true);
+  assert.equal(page.data.lists.lists[0].items.length, 0);
+});
+
+test('the panel opens on the page under the button, and goes when its card is drawn over', async () => {
+  const page = await openSearch();
+  const card = cardOf(page.document, 'Caterpie');
+  card.querySelector('.ptcg-list-button').click();
+  await settle(40);
+  const panel = panelOf(card);
+  assert.equal(panel.parentElement, page.document.body, 'not inside the card, which cuts off what overflows it');
+  assert.ok(panel.classList.contains('ptcg-list-panel--floating'));
+  assert.match(panel.style.top, /px$/);
+  page.document.querySelector('.search-results').innerHTML = searchCard(BULBASAUR);
+  await settle(80);
+  assert.equal(panel.isConnected, false, 'nothing left floating on the page');
+});
+
+test('results drawn again (a new page of results) get buttons, and the old ones are let go', async () => {
+  const page = await openSearch();
+  page.document.querySelector('.search-results').innerHTML = searchCard(BULBASAUR) + searchCard({ ...CATERPIE, id: '517017', name: 'Metapod' });
+  await settle(80);
+  const cards = [...page.document.querySelectorAll('.search-result .product-card')];
+  assert.equal(cards.length, 2);
+  for (const card of cards) assert.equal(card.querySelectorAll('.ptcg-list-control').length, 1);
+});
+
+test('a product page saves the printing it shows, and still finds a card saved before printings were kept', async () => {
+  const page = await load(watchList());
+  button(page.document).click();
+  const box = page.document.querySelector('.ptcg-list-panel input[type="checkbox"]');
+  box.checked = true;
+  box.dispatchEvent(new page.window.Event('change'));
+  await settle();
+  const [saved] = page.data.lists.lists[0].items;
+  same([saved.key, saved.printing], ['642621:english:holofoil', 'Holofoil']);
+  assert.equal(page.document.querySelector('.ptcg-printing-chosen').hidden, true, 'no printing step on a product page');
 });
 
 test('creating a list from the panel saves the card into it', async () => {

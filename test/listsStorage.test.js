@@ -90,3 +90,15 @@ test('a sort survives saving and loading', async () => {
   await saveLists(storage, { version: 1, lists: [{ id: 'a', name: 'W', items: [], sort: { key: 'volatility', dir: 'asc' } }] });
   assert.deepEqual((await loadLists(storage)).lists[0].sort, { key: 'volatility', dir: 'asc' });
 });
+
+test('a printing chosen for an entry is kept, tidied; anything else there is dropped', () => {
+  const state = sanitizeState({ version: 1, lists: [{ id: 'a', name: 'A', items: [
+    { productId: '1', printing: '  Reverse   Holofoil ' }, { productId: '2', printing: 7 }, { productId: '3' },
+  ] }] });
+  const [one, two, three] = state.lists[0].items;
+  assert.equal(one.printing, 'Reverse Holofoil');
+  assert.equal(one.key, '1:english:reverse holofoil', 'keyed by it when the stored key is missing');
+  assert.equal('printing' in two, false);
+  assert.equal('printing' in three, false);
+  assert.equal(three.key, '3:english');
+});

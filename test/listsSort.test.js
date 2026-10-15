@@ -167,3 +167,10 @@ test('each sort starts in its natural direction, and the button says what it mea
   assert.equal(directionLabel('volatility', 'asc'), 'Steadiest first');
   assert.equal(directionLabel('nonsense', 'asc'), 'Oldest first');
 });
+
+test('a printing chosen when it was saved is the printing it is priced in', () => {
+  assert.equal(watchCondition(item('1', { printing: 'Reverse Holofoil' })), 'Near Mint Reverse Holofoil');
+  assert.equal(watchCondition(item('1', { printing: 'Reverse Holofoil', priceAtSave: { condition: 'Unopened' } })), 'Unopened Reverse Holofoil');
+  assert.notEqual(askKey(item('1', { printing: 'Reverse Holofoil' })), askKey(item('1', { printing: 'Holofoil' })), 'two printings, two Asks');
+  assert.deepEqual(askQuery(item('7', { priceAtSave: null, printing: 'Holofoil' })), { productId: '7', condition: 'Near Mint Holofoil' }, 'a printing is known: not sealed');
+});

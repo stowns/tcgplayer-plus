@@ -12,7 +12,7 @@ import { createCache, singleFlight } from './lib/cache.js';
 import { createThrottle } from './lib/throttle.js';
 import { createClient } from './lib/httpClient.js';
 import { lookupTrend, trendCacheKey, TREND_CACHE_TTL_MS } from './lib/trendLookup.js';
-import { lookupListing, listingCacheKey } from './lib/listingLookup.js';
+import { lookupListing, lookupPrintings, listingCacheKey } from './lib/listingLookup.js';
 import { noteAsk, staleAskKeys } from './lib/askHistory.js';
 import { api, onMessage } from './lib/runtime.js';
 
@@ -104,10 +104,22 @@ const lookupTrendOnce = singleFlight((key, item) => untilDone('price-trend', key
 
 // Every Ask that comes back is noted, so the next one can be shown against it. A card
 // that is not selling has no sales for a trend to move on, but its Ask still moves.
-async function withChange(key, ask) {
+//
+// An earlier Ask is judged against what the card sold for before anything is compared
+// with it (see askHistory.js), which needs the card's sales history: the same lookup the
+// trend uses, shared and cached with it, and only made when there is an Ask to judge.
+async function lowestSaleOf(item) {
+  const trendItem = { productId: item.productId, language: item.language, condition: item.condition };
+  const trend = await lookupTrendOnce(trendCacheKey(trendItem), trendItem);
+  // Unreadable is "do not judge yet"; readable with no sales is "nothing to judge by".
+  if (!trend || trend.reason === 'unavailable') return undefined;
+  return Number.isFinite(trend.lowestSale) ? trend.lowestSale : null;
+}
+
+async function withChange(key, ask, item) {
   if (!ask || ask.status !== 'ok') return ask;
   try {
-    return { ...ask, change: await noteAsk(storage, key, ask) };
+    return { ...ask, change: await noteAsk(storage, key, ask, { lowestSale: () => lowestSaleOf(item) }) };
   } catch {
     // The price is the answer; failing to write it down must not lose it.
     return ask;
@@ -116,7 +128,12 @@ async function withChange(key, ask) {
 
 const lookupListingOnce = singleFlight((key, item) => untilDone('listing-price', key, lookupListing(item, {
   postJson: (url, body) => client.postJson(url, body, { onRetry: retryNotifier('listing-price', key) }),
-}).then((ask) => withChange(key, ask))));
+}).then((ask) => withChange(key, ask, item))));
+
+// Which printings a product is listed in, for the choice on a search page's button.
+const lookupPrintingsOnce = singleFlight((productId) => lookupPrintings({ productId }, {
+  postJson: (url, body) => client.postJson(url, body),
+}));
 
 // Storage written under the `ls:` prefix holds Asks that are no longer read; clear any that are there.
 Promise.resolve()
@@ -149,6 +166,10 @@ onMessage((message, sender) => {
     const key = listingCacheKey(item);
     const stop = watch('listing-price', key, sender, message.ref);
     return lookupListingOnce(key, item).catch(() => ({ status: 'unavailable' })).finally(stop);
+  }
+  if (message.type === 'product-printings') {
+    const productId = String((message.item && message.item.productId) ?? '');
+    return lookupPrintingsOnce(productId).catch(() => ({ status: 'unavailable' }));
   }
   if (message.type === 'open-lists') {
     return api.tabs.create({ url: api.runtime.getURL('home/home.html#lists') }).then(() => ({ opened: true }));

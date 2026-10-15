@@ -63,14 +63,17 @@ const money = (value) => (Number.isFinite(value) && value > 0 ? Math.round(value
  * when nothing is for sale or the response is not what we expect. The price
  * reported is the item price alone, which is what an order history shows;
  * shipping is reported separately, and `url` is where to see that listing.
+ * @param {{productId?: string|number}} [expect] rows naming a different product are left out
  */
-export function parseLowestListing(json) {
+export function parseLowestListing(json, { productId } = {}) {
   const rows = json && Array.isArray(json.results) && json.results[0] && json.results[0].results;
   if (!Array.isArray(rows)) return null;
   let best = null;
   for (const row of rows) {
     const price = money(Number(row && row.price));
     if (price === null || row.listingType === 'custom') continue;
+    // A row that says it is another product is not this card's price, whatever the feed meant by it.
+    if (productId !== undefined && row.productId !== undefined && String(row.productId) !== String(productId)) continue;
     const shipping = money(Number(row.shippingPrice)) ?? 0;
     const landed = price + shipping;
     if (!best || landed < best.landed || (landed === best.landed && price < best.price)) {
@@ -81,4 +84,39 @@ export function parseLowestListing(json) {
   const { landed, ...lowest } = best;
   lowest.count = Number(json.results[0].totalResults) || 0;
   return lowest;
+}
+
+/**
+ * Which printings a product is listed in: the listings search with no condition, asking
+ * only for its tally by printing. A product page shows one printing at a time; a search
+ * page shows none, so this is how the choice is offered there.
+ */
+export function printingsBody() {
+  return {
+    filters: { term: { sellerStatus: 'Live', channelId: 0, listingType: 'standard' }, range: { quantity: { gte: 1 } }, exclude: { channelExclusion: 0 } },
+    from: 0,
+    size: 1,
+    sort: { field: 'price+shipping', order: 'asc' },
+    context: { shippingCountry: 'US', cart: {} },
+    aggregations: ['printing'],
+  };
+}
+
+/**
+ * @returns {{name: string, listings: number}[]|null} most-listed first; empty when nothing
+ *   is listed; null when the response is not what we expect
+ */
+export function parsePrintings(json) {
+  const result = json && Array.isArray(json.results) ? json.results[0] : null;
+  if (!result || typeof result !== 'object') return null;
+  const tally = result.aggregations && Array.isArray(result.aggregations.printing) ? result.aggregations.printing : [];
+  const seen = new Map();
+  for (const entry of tally) {
+    const name = entry && typeof entry.value === 'string' ? entry.value.replace(/\s+/g, ' ').trim() : '';
+    const listings = Number(entry && entry.count);
+    if (!name || !Number.isFinite(listings) || listings <= 0) continue;
+    seen.set(name, (seen.get(name) || 0) + listings);
+  }
+  return [...seen].map(([name, listings]) => ({ name, listings }))
+    .sort((a, b) => b.listings - a.listings || a.name.localeCompare(b.name));
 }
